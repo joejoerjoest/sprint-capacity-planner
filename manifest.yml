@@ -1,0 +1,19 @@
+modules:
+  jira:projectPage:
+    - key: sprint-capacity-planner-hello-world-project-page
+      resource: main
+      resolver:
+        function: resolver
+      title: sprint-capacity-planner
+  function:
+    - key: resolver
+      handler: index.handler
+resources:
+  - key: main
+    path: static/hello-world/build
+app:
+  runtime:
+    name: nodejs24.x
+    memoryMB: 256
+    architecture: arm64
+  id: ari:cloud:ecosystem::app/69b3afca-3d4f-4220-ad79-211e47a5ac4d
