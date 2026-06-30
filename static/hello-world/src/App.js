@@ -471,7 +471,12 @@ export default function App() {
     if (showCommitted) { lx = swatch(lx, col.blue, 'Committed'); lx = swatch(lx, col.red, 'Over-committed'); }
 
     const safeName = (sprintName || 'sprint').replace(/[^a-z0-9\-_]+/gi, '-');
-    doc.save(`${safeName}-capacity-report.pdf`);
+    // Timestamp keeps each export unique so a re-export can't collide with an
+    // already-open PDF of the same name.
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    doc.save(`${safeName}-capacity-report-${stamp}.pdf`);
   }
 
   // ── Jira integration (via resolver, asApp) ──
