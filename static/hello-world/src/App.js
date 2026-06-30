@@ -39,13 +39,24 @@ const styles = {
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function getWorkingDays(start, end) {
+const DEFAULT_WORK_DAYS = [1, 2, 3, 4, 5]; // Mon–Fri (0 = Sun … 6 = Sat)
+const WEEKDAYS = [
+  { d: 1, label: 'Mon' }, { d: 2, label: 'Tue' }, { d: 3, label: 'Wed' },
+  { d: 4, label: 'Thu' }, { d: 5, label: 'Fri' }, { d: 6, label: 'Sat' }, { d: 0, label: 'Sun' },
+];
+
+// Working days = days within [start,end] whose weekday is in workDays and which
+// are not org holidays.
+function getWorkingDays(start, end, workDays, holidays) {
+  const wd = (workDays && workDays.length) ? workDays : DEFAULT_WORK_DAYS;
+  const hol = new Set(holidays || []);
   const days = [];
   const current = new Date(start);
   const endDate = new Date(end);
   while (current <= endDate) {
-    if (current.getDay() !== 0 && current.getDay() !== 6) {
-      days.push(current.toISOString().split('T')[0]);
+    const iso = current.toISOString().split('T')[0];
+    if (wd.includes(current.getDay()) && !hol.has(iso)) {
+      days.push(iso);
     }
     current.setDate(current.getDate() + 1);
   }
@@ -89,6 +100,11 @@ export default function App() {
   const [mode, setMode] = useState('Both');
   const [hoursPerDay, setHoursPerDay] = useState(6);
   const [hoursPerSP, setHoursPerSP] = useState(8);
+
+  // Work week & org holidays
+  const [workDays, setWorkDays] = useState(DEFAULT_WORK_DAYS);
+  const [holidays, setHolidays] = useState([]); // ['YYYY-MM-DD', ...]
+  const [hDate, setHDate] = useState(today());
 
   // Team
   const [members, setMembers] = useState([]);
@@ -147,6 +163,8 @@ export default function App() {
           if (c.mode != null) setMode(c.mode);
           if (c.hoursPerDay != null) setHoursPerDay(c.hoursPerDay);
           if (c.hoursPerSP != null) setHoursPerSP(c.hoursPerSP);
+          if (Array.isArray(c.workDays) && c.workDays.length) setWorkDays(c.workDays);
+          if (Array.isArray(c.holidays)) setHolidays(c.holidays);
         }
         setMembers(Array.isArray(data?.members) ? data.members : []);
         setLeaves(Array.isArray(data?.leaves) ? data.leaves : []);
@@ -173,7 +191,7 @@ export default function App() {
       try {
         await invoke('saveData', {
           projectId: projectIdRef.current,
-          config: { sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP },
+          config: { sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, workDays, holidays },
           members,
           leaves,
           bufferPct,
@@ -188,7 +206,7 @@ export default function App() {
       }
     }, 600);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [loaded, sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, members, leaves, bufferPct]);
+  }, [loaded, sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, members, leaves, bufferPct, workDays, holidays]);
 
   // ── Add member ──
   function addMember() {
@@ -214,9 +232,24 @@ export default function App() {
     setLeaves(leaves.filter((_, i) => i !== idx));
   }
 
+  // ── Work week & holidays ──
+  function toggleWorkDay(d) {
+    setWorkDays((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]));
+  }
+
+  function addHoliday() {
+    if (!hDate) return;
+    if (holidays.includes(hDate)) return;
+    setHolidays([...holidays, hDate].sort());
+  }
+
+  function removeHoliday(date) {
+    setHolidays(holidays.filter((d) => d !== date));
+  }
+
   // ── Calculate capacity ──
   function calculateCapacity() {
-    const workingDays = getWorkingDays(sprintStart, sprintEnd);
+    const workingDays = getWorkingDays(sprintStart, sprintEnd, workDays, holidays);
     const totalDays = workingDays.length;
 
     return members.map(m => {
@@ -249,14 +282,14 @@ export default function App() {
   const totalRawHours = results.reduce((s, r) => s + r.rawHours, 0);
   const totalSP = results.reduce((s, r) => s + r.availSP, 0);
   const avgPct = results.length > 0 ? Math.round(results.reduce((s, r) => s + r.pct, 0) / results.length) : 0;
-  const sprintDays = getWorkingDays(sprintStart, sprintEnd).length;
+  const sprintDays = getWorkingDays(sprintStart, sprintEnd, workDays, holidays).length;
 
   // ── Sprint history ──
   async function saveSnapshotNow() {
     if (members.length === 0) return;
     setSavingSnapshot(true);
     const snapshot = {
-      config: { sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP },
+      config: { sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, workDays, holidays },
       members,
       leaves,
       bufferPct,
@@ -292,6 +325,8 @@ export default function App() {
       if (c.mode != null) setMode(c.mode);
       if (c.hoursPerDay != null) setHoursPerDay(c.hoursPerDay);
       if (c.hoursPerSP != null) setHoursPerSP(c.hoursPerSP);
+      if (Array.isArray(c.workDays) && c.workDays.length) setWorkDays(c.workDays);
+      if (Array.isArray(c.holidays)) setHolidays(c.holidays);
     }
     setMembers(Array.isArray(snap?.members) ? snap.members : []);
     setLeaves(Array.isArray(snap?.leaves) ? snap.leaves : []);
@@ -552,6 +587,55 @@ export default function App() {
               ))}
             </select>
           )}
+        </div>
+      </div>
+
+      {/* Work Week & Holidays */}
+      <div style={styles.card}>
+        <p style={styles.sectionHeader}>📆 Work Week & Holidays</p>
+        <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <div>
+            <label style={{ ...styles.label, display: 'block', marginBottom: '8px' }}>Working days</label>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              {WEEKDAYS.map(({ d, label }) => {
+                const on = workDays.includes(d);
+                return (
+                  <button
+                    key={d}
+                    onClick={() => toggleWorkDay(d)}
+                    style={{
+                      padding: '6px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer',
+                      borderRadius: '6px', border: `1px solid ${on ? '#805ad5' : '#4a5568'}`,
+                      background: on ? '#553c9a' : 'transparent', color: on ? '#fff' : '#718096',
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ flex: '1 1 320px', minWidth: '280px' }}>
+            <label style={{ ...styles.label, display: 'block', marginBottom: '8px' }}>Company holidays (apply to everyone)</label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
+              <input type="date" style={{ ...styles.input, width: '150px' }} value={hDate} onChange={(e) => setHDate(e.target.value)} />
+              <button style={styles.btnSecondary} onClick={addHoliday}>+ Add holiday</button>
+            </div>
+            {holidays.length === 0
+              ? <span style={{ fontSize: '12px', color: '#718096' }}>No holidays added.</span>
+              : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {holidays.map((d) => (
+                    <span key={d} style={{ ...styles.pill, background: '#2d3748', color: '#e2e8f0', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      {d}
+                      <span onClick={() => removeHoliday(d)} style={{ cursor: 'pointer', color: '#fc8181', fontWeight: '700' }}>✕</span>
+                    </span>
+                  ))}
+                </div>
+              )
+            }
+          </div>
         </div>
       </div>
 
