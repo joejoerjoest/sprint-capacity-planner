@@ -165,6 +165,7 @@ export default function App() {
           if (c.hoursPerSP != null) setHoursPerSP(c.hoursPerSP);
           if (Array.isArray(c.workDays) && c.workDays.length) setWorkDays(c.workDays);
           if (Array.isArray(c.holidays)) setHolidays(c.holidays);
+          if (c.selectedSprint?.id) setSelectedSprint(c.selectedSprint);
         }
         setMembers(Array.isArray(data?.members) ? data.members : []);
         setLeaves(Array.isArray(data?.leaves) ? data.leaves : []);
@@ -191,7 +192,7 @@ export default function App() {
       try {
         await invoke('saveData', {
           projectId: projectIdRef.current,
-          config: { sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, workDays, holidays },
+          config: { sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, workDays, holidays, selectedSprint },
           members,
           leaves,
           bufferPct,
@@ -206,7 +207,7 @@ export default function App() {
       }
     }, 600);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [loaded, sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, members, leaves, bufferPct, workDays, holidays]);
+  }, [loaded, sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, members, leaves, bufferPct, workDays, holidays, selectedSprint]);
 
   // ── Add member ──
   function addMember() {
@@ -290,7 +291,7 @@ export default function App() {
     if (members.length === 0) return;
     setSavingSnapshot(true);
     const snapshot = {
-      config: { sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, workDays, holidays },
+      config: { sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, workDays, holidays, selectedSprint },
       members,
       leaves,
       bufferPct,
@@ -328,6 +329,7 @@ export default function App() {
       if (c.hoursPerSP != null) setHoursPerSP(c.hoursPerSP);
       if (Array.isArray(c.workDays) && c.workDays.length) setWorkDays(c.workDays);
       if (Array.isArray(c.holidays)) setHolidays(c.holidays);
+      setSelectedSprint(c.selectedSprint?.id ? c.selectedSprint : null);
     }
     setMembers(Array.isArray(snap?.members) ? snap.members : []);
     setLeaves(Array.isArray(snap?.leaves) ? snap.leaves : []);
