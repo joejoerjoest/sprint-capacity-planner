@@ -154,19 +154,38 @@ resolver.define('jiraCommitted', async (req) => {
     const { sprintId } = req.payload ?? {};
     if (!sprintId) return { committed: null };
 
-    // Find the board behind this sprint, then its configured estimation field
-    // (Story Points). Uses agile scopes only — avoids /rest/api/3/field.
+    // 1) Try the board's configured estimation field (clean when available).
     let estField = null;
     try {
         const sprint = await jiraJson(route`/rest/agile/1.0/sprint/${sprintId}`, 'sprint');
         const boardId = sprint?.originBoardId;
+        console.log(`committed: sprint ${sprintId} originBoardId=${boardId}`);
         if (boardId) {
             const cfg = await jiraJson(route`/rest/agile/1.0/board/${boardId}/configuration`, 'board-config');
+            console.log(`committed: board ${boardId} estimation=${JSON.stringify(cfg?.estimation)}`);
             const fid = cfg?.estimation?.field?.fieldId;
             if (fid && fid !== 'none') estField = fid;
         }
     } catch (e) {
-        // Fall back to issue count only.
+        console.error(`committed: board-config step failed: ${e.message}`);
+    }
+
+    // 2) Fallback: discover the Story Points field from the issue field names.
+    if (!estField) {
+        try {
+            const probe = await jiraJson(
+                route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=0&maxResults=1&fields=*all&expand=names`,
+                'names-probe'
+            );
+            const names = probe?.names ?? {};
+            const entry = Object.entries(names).find(
+                ([, name]) => name === 'Story Points' || name === 'Story point estimate'
+            );
+            estField = entry?.[0] || null;
+            console.log(`committed: detected SP field from names = ${estField}`);
+        } catch (e) {
+            console.error(`committed: names-probe step failed: ${e.message}`);
+        }
     }
 
     let totalSP = 0;
@@ -189,6 +208,7 @@ resolver.define('jiraCommitted', async (req) => {
         startAt += issues.length;
         if (issues.length === 0 || startAt >= (data?.total ?? startAt)) break;
     }
+    console.log(`committed: estField=${estField} issues=${issueCount} totalSP=${totalSP}`);
     return { committed: { totalSP: Math.round(totalSP * 10) / 10, issueCount, hasSP: !!estField } };
 });
 
