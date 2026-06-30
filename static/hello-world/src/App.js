@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { invoke, view } from '@forge/bridge';
+import { invoke, view, requestJira } from '@forge/bridge';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -111,7 +111,16 @@ export default function App() {
   const [saveError, setSaveError] = useState(false);
   const [savingSnapshot, setSavingSnapshot] = useState(false);
   const projectIdRef = useRef(null);
+  const projectKeyRef = useRef(null);
   const saveTimerRef = useRef(null);
+
+  // Jira integration state
+  const [jiraSprints, setJiraSprints] = useState([]);
+  const [jiraUsers, setJiraUsers] = useState([]);
+  const [committed, setCommitted] = useState(null); // { totalSP, issueCount, sprintName }
+  const [jiraBusy, setJiraBusy] = useState(''); // '', 'sprints', 'users', 'committed'
+  const [jiraError, setJiraError] = useState('');
+  const [selectedSprint, setSelectedSprint] = useState(null); // { id, name }
 
   // ── Load on mount ──
   useEffect(() => {
@@ -121,6 +130,7 @@ export default function App() {
       try {
         const ctx = await view.getContext();
         projectId = ctx?.extension?.project?.id;
+        projectKeyRef.current = ctx?.extension?.project?.key ?? null;
       } catch (e) {
         projectId = undefined;
       }
@@ -368,6 +378,110 @@ export default function App() {
     doc.save(`${safeName}-capacity-report.pdf`);
   }
 
+  // ── Jira integration (via @forge/bridge requestJira, as the current user) ──
+  function projectRef() {
+    return projectKeyRef.current || projectIdRef.current;
+  }
+
+  async function jiraGet(restPath) {
+    const res = await requestJira(restPath, { headers: { Accept: 'application/json' } });
+    if (!res.ok) {
+      throw new Error(`Jira ${res.status} on ${restPath}`);
+    }
+    return res.json();
+  }
+
+  // Find a board for this project (prefer a scrum board).
+  async function findBoardId() {
+    const pid = projectRef();
+    const data = await jiraGet(`/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(pid)}&maxResults=50`);
+    const boards = data?.values ?? [];
+    const scrum = boards.find((b) => b.type === 'scrum');
+    return (scrum || boards[0])?.id ?? null;
+  }
+
+  async function importSprints() {
+    setJiraBusy('sprints'); setJiraError('');
+    try {
+      const boardId = await findBoardId();
+      if (!boardId) { setJiraError('No board found for this project.'); setJiraSprints([]); return; }
+      const data = await jiraGet(`/rest/agile/1.0/board/${boardId}/sprint?state=active,future&maxResults=50`);
+      setJiraSprints(data?.values ?? []);
+      if ((data?.values ?? []).length === 0) setJiraError('No active or future sprints on this board.');
+    } catch (e) {
+      console.error(e); setJiraError(e.message || 'Failed to load sprints.');
+    } finally {
+      setJiraBusy('');
+    }
+  }
+
+  function applySprint(sprint) {
+    if (sprint.name) setSprintName(sprint.name);
+    if (sprint.startDate) setSprintStart(sprint.startDate.split('T')[0]);
+    if (sprint.endDate) setSprintEnd(sprint.endDate.split('T')[0]);
+    setSelectedSprint({ id: sprint.id, name: sprint.name });
+    setCommitted(null);
+    setJiraSprints([]);
+  }
+
+  async function importUsers() {
+    setJiraBusy('users'); setJiraError('');
+    try {
+      const pid = projectRef();
+      const data = await jiraGet(`/rest/api/3/user/assignable/search?project=${encodeURIComponent(pid)}&maxResults=50`);
+      setJiraUsers(Array.isArray(data) ? data.filter((u) => u.accountType === 'atlassian') : []);
+      if ((data ?? []).length === 0) setJiraError('No assignable users found.');
+    } catch (e) {
+      console.error(e); setJiraError(e.message || 'Failed to load users.');
+    } finally {
+      setJiraBusy('');
+    }
+  }
+
+  function addJiraUser(u) {
+    const name = u.displayName?.trim();
+    if (!name || members.find((m) => m.name === name)) return;
+    setMembers([...members, { name, role: '', hours: hoursPerDay, accountId: u.accountId }]);
+  }
+
+  // Sum committed story points for the selected sprint.
+  async function loadCommitted() {
+    if (!selectedSprint) return;
+    setJiraBusy('committed'); setJiraError('');
+    try {
+      // Detect the story point field id.
+      const fields = await jiraGet('/rest/api/3/field');
+      const spField = (fields || []).find(
+        (f) => f.name === 'Story Points' || f.name === 'Story point estimate'
+      );
+      let totalSP = 0;
+      let issueCount = 0;
+      let startAt = 0;
+      // Page through sprint issues.
+      while (true) {
+        const fieldsParam = spField ? `&fields=${spField.id}` : '&fields=summary';
+        const data = await jiraGet(
+          `/rest/agile/1.0/sprint/${selectedSprint.id}/issue?startAt=${startAt}&maxResults=50${fieldsParam}`
+        );
+        const issues = data?.issues ?? [];
+        issueCount += issues.length;
+        if (spField) {
+          for (const it of issues) {
+            const v = it.fields?.[spField.id];
+            if (typeof v === 'number') totalSP += v;
+          }
+        }
+        startAt += issues.length;
+        if (issues.length === 0 || startAt >= (data?.total ?? startAt)) break;
+      }
+      setCommitted({ totalSP: Math.round(totalSP * 10) / 10, issueCount, sprintName: selectedSprint.name, hasSP: !!spField });
+    } catch (e) {
+      console.error(e); setJiraError(e.message || 'Failed to load sprint issues.');
+    } finally {
+      setJiraBusy('');
+    }
+  }
+
   // ── Render ──
   return (
     <div style={styles.wrap}>
@@ -437,7 +551,41 @@ export default function App() {
             />
           </div>
         </div>
+
+        {/* Jira sprint import */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginTop: '4px' }}>
+          <button style={styles.btnSecondary} onClick={importSprints} disabled={jiraBusy === 'sprints'}>
+            {jiraBusy === 'sprints' ? 'Loading…' : '⟳ Import sprint from Jira'}
+          </button>
+          {selectedSprint && (
+            <span style={{ fontSize: '12px', color: '#9ae6b4' }}>Linked to Jira sprint: <b>{selectedSprint.name}</b></span>
+          )}
+          {jiraSprints.length > 0 && (
+            <select
+              style={styles.select}
+              defaultValue=""
+              onChange={(e) => {
+                const s = jiraSprints.find((x) => String(x.id) === e.target.value);
+                if (s) applySprint(s);
+              }}
+            >
+              <option value="" disabled>Select a sprint…</option>
+              {jiraSprints.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}{s.state ? ` (${s.state})` : ''}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
       </div>
+
+      {/* Jira error banner */}
+      {jiraError && (
+        <div style={{ ...styles.infoBox, color: '#fc8181', borderColor: '#742a2a', marginBottom: '16px' }}>
+          Jira: {jiraError}
+        </div>
+      )}
 
       {/* Tabs */}
       <div style={styles.tabs}>
@@ -470,7 +618,34 @@ export default function App() {
               <input type="number" style={{ ...styles.input, width: '80px' }} min="1" max="8" step="0.5" value={mHours} onChange={e => setMHours(e.target.value)} />
             </div>
             <button style={styles.btnPrimary} onClick={addMember}>+ Add Member</button>
+            <button style={styles.btnSecondary} onClick={importUsers} disabled={jiraBusy === 'users'}>
+              {jiraBusy === 'users' ? 'Loading…' : '⟳ Import assignees from Jira'}
+            </button>
           </div>
+
+          {jiraUsers.length > 0 && (
+            <div style={{ ...styles.card, marginBottom: '16px' }}>
+              <div style={styles.sideBySide}>
+                <p style={{ ...styles.sectionHeader, border: 'none', margin: 0, padding: 0 }}>Assignable Jira users — click to add</p>
+                <button style={styles.btnDanger} onClick={() => setJiraUsers([])}>✕ Close</button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '12px' }}>
+                {jiraUsers.map((u) => {
+                  const added = members.find((m) => m.name === u.displayName?.trim());
+                  return (
+                    <button
+                      key={u.accountId}
+                      style={{ ...styles.btnSecondary, opacity: added ? 0.5 : 1 }}
+                      onClick={() => addJiraUser(u)}
+                      disabled={!!added}
+                    >
+                      {added ? '✓ ' : '+ '}{u.displayName}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {members.length === 0
             ? <div style={styles.infoBox}>No team members yet — add your first member above.</div>
@@ -622,6 +797,43 @@ export default function App() {
                       <span style={styles.summaryItem}>
                         Before buffer: <b style={{ color: '#a0aec0' }}>{Math.round(totalRawHours * 10) / 10}h</b> → after: <b style={{ color: '#68d391' }}>{Math.round(totalHours * 10) / 10}h</b>
                       </span>
+                    </div>
+                  )}
+
+                  {/* Committed vs available (Jira) */}
+                  {selectedSprint && (
+                    <div style={{ ...styles.summaryBar, borderLeft: '4px solid #4299e1', alignItems: 'center' }}>
+                      {!committed ? (
+                        <>
+                          <span style={styles.summaryItem}>
+                            Compare against the committed work in Jira sprint <b style={{ color: '#90cdf4' }}>{selectedSprint.name}</b>
+                          </span>
+                          <button style={styles.btnSecondary} onClick={loadCommitted} disabled={jiraBusy === 'committed'}>
+                            {jiraBusy === 'committed' ? 'Loading…' : '⟳ Load Jira commitment'}
+                          </button>
+                        </>
+                      ) : (() => {
+                        const diff = Math.round((totalSP - committed.totalSP) * 10) / 10;
+                        const over = diff < 0;
+                        return (
+                          <>
+                            <span style={styles.summaryItem}>
+                              Committed in Jira: <b style={{ color: '#90cdf4' }}>{committed.hasSP ? `${committed.totalSP} SP` : 'n/a'}</b> across <b style={{ color: '#e2e8f0' }}>{committed.issueCount}</b> issues
+                            </span>
+                            <span style={styles.summaryItem}>
+                              Available (computed): <b style={{ color: '#68d391' }}>{Math.round(totalSP * 10) / 10} SP</b>
+                            </span>
+                            {committed.hasSP && (
+                              <span style={styles.summaryItem}>
+                                {over
+                                  ? <b style={{ color: '#fc8181' }}>Over-committed by {Math.abs(diff)} SP</b>
+                                  : <b style={{ color: '#68d391' }}>{diff} SP headroom</b>}
+                              </span>
+                            )}
+                            <button style={styles.btnDanger} onClick={() => setCommitted(null)}>↻ Refresh</button>
+                          </>
+                        );
+                      })()}
                     </div>
                   )}
 
