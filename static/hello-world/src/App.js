@@ -107,6 +107,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [savingSnapshot, setSavingSnapshot] = useState(false);
   const projectIdRef = useRef(null);
   const saveTimerRef = useRef(null);
 
@@ -238,6 +239,65 @@ export default function App() {
   const avgPct = results.length > 0 ? Math.round(results.reduce((s, r) => s + r.pct, 0) / results.length) : 0;
   const sprintDays = getWorkingDays(sprintStart, sprintEnd).length;
 
+  // ── Sprint history ──
+  async function saveSnapshotNow() {
+    if (members.length === 0) return;
+    setSavingSnapshot(true);
+    const snapshot = {
+      config: { sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP },
+      members,
+      leaves,
+      bufferPct,
+      summary: {
+        sprintName,
+        sprintStart,
+        sprintEnd,
+        mode,
+        bufferPct,
+        memberCount: members.length,
+        sprintDays,
+        totalHours: Math.round(totalHours * 10) / 10,
+        totalSP: Math.round(totalSP * 10) / 10,
+        avgPct,
+      },
+    };
+    try {
+      const res = await invoke('saveSnapshot', { projectId: projectIdRef.current, snapshot });
+      if (Array.isArray(res?.history)) setHistory(res.history);
+    } catch (e) {
+      console.error('saveSnapshot failed:', e);
+    } finally {
+      setSavingSnapshot(false);
+    }
+  }
+
+  function restoreSnapshot(snap) {
+    const c = snap?.config;
+    if (c) {
+      if (c.sprintName != null) setSprintName(c.sprintName);
+      if (c.sprintStart != null) setSprintStart(c.sprintStart);
+      if (c.sprintEnd != null) setSprintEnd(c.sprintEnd);
+      if (c.mode != null) setMode(c.mode);
+      if (c.hoursPerDay != null) setHoursPerDay(c.hoursPerDay);
+      if (c.hoursPerSP != null) setHoursPerSP(c.hoursPerSP);
+    }
+    setMembers(Array.isArray(snap?.members) ? snap.members : []);
+    setLeaves(Array.isArray(snap?.leaves) ? snap.leaves : []);
+    const b = typeof snap?.bufferPct === 'number' ? snap.bufferPct : 0;
+    setBufferPct(b);
+    setBufferInput(String(b));
+    setActiveTab('report');
+  }
+
+  async function removeSnapshot(id) {
+    try {
+      const res = await invoke('deleteSnapshot', { projectId: projectIdRef.current, id });
+      if (Array.isArray(res?.history)) setHistory(res.history);
+    } catch (e) {
+      console.error('deleteSnapshot failed:', e);
+    }
+  }
+
   // ── Render ──
   return (
     <div style={styles.wrap}>
@@ -311,13 +371,13 @@ export default function App() {
 
       {/* Tabs */}
       <div style={styles.tabs}>
-        {['team', 'leave', 'report'].map(t => (
+        {['team', 'leave', 'report', 'history'].map(t => (
           <button
             key={t}
             style={activeTab === t ? styles.tabActive : styles.tab}
             onClick={() => setActiveTab(t)}
           >
-            {t === 'team' ? '👥 Team Setup' : t === 'leave' ? '🏖️ Leave Planner' : '📊 Capacity Report'}
+            {t === 'team' ? '👥 Team Setup' : t === 'leave' ? '🏖️ Leave Planner' : t === 'report' ? '📊 Capacity Report' : `📜 History${history.length ? ` (${history.length})` : ''}`}
           </button>
         ))}
       </div>
@@ -440,9 +500,16 @@ export default function App() {
               ? <div style={{ ...styles.infoBox, color: '#fc8181' }}>Sprint end date must be after start date.</div>
               : (
                 <div>
-                  <p style={styles.sectionHeader}>
-                    📊 {sprintName} · {sprintStart} → {sprintEnd}
-                  </p>
+                  <div style={{ ...styles.sideBySide, marginBottom: '16px' }}>
+                    <p style={{ ...styles.sectionHeader, border: 'none', margin: 0, padding: 0 }}>
+                      📊 {sprintName} · {sprintStart} → {sprintEnd}
+                    </p>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button style={styles.btnSecondary} onClick={saveSnapshotNow} disabled={savingSnapshot}>
+                        {savingSnapshot ? 'Saving…' : '📜 Save to history'}
+                      </button>
+                    </div>
+                  </div>
 
                   {/* Metrics */}
                   <div style={styles.metricGrid}>
@@ -530,6 +597,51 @@ export default function App() {
                   )}
                 </div>
               )
+          }
+        </div>
+      )}
+
+      {/* ── Tab: History ── */}
+      {activeTab === 'history' && (
+        <div>
+          <div style={{ ...styles.sideBySide, marginBottom: '16px' }}>
+            <p style={{ ...styles.sectionHeader, border: 'none', margin: 0, padding: 0 }}>
+              Saved sprint snapshots
+            </p>
+            <button style={styles.btnPrimary} onClick={saveSnapshotNow} disabled={savingSnapshot || members.length === 0}>
+              {savingSnapshot ? 'Saving…' : '📸 Snapshot current sprint'}
+            </button>
+          </div>
+
+          {history.length === 0
+            ? <div style={styles.infoBox}>No snapshots yet — capture the current sprint with “Snapshot current sprint”.</div>
+            : history.map((snap) => {
+              const s = snap.summary || {};
+              const when = snap.savedAt ? new Date(snap.savedAt).toLocaleString() : '';
+              const pill = capacityPill(s.avgPct ?? 0);
+              return (
+                <div key={snap.id} style={styles.card}>
+                  <div style={styles.sideBySide}>
+                    <div>
+                      <span style={styles.memberName}>{s.sprintName || 'Sprint'}</span>
+                      <span style={styles.memberRole}> · {s.sprintStart} → {s.sprintEnd}</span>
+                    </div>
+                    <span style={{ fontSize: '11px', color: '#718096' }}>Saved {when}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', margin: '10px 0' }}>
+                    <span style={styles.memberStat}>{s.memberCount ?? 0} members</span>
+                    <span style={styles.memberStat}>{s.sprintDays ?? 0} working days</span>
+                    <span style={styles.memberStat}><b style={{ color: '#68d391' }}>{s.totalHours ?? 0}h</b> · <b style={{ color: '#63b3ed' }}>{s.totalSP ?? 0} SP</b></span>
+                    {s.bufferPct ? <span style={styles.memberStat}>{s.bufferPct}% buffer</span> : null}
+                    <span style={{ ...styles.pill, background: pill.bg, color: pill.color }}>{s.avgPct ?? 0}% · {pill.label}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button style={styles.btnSecondary} onClick={() => restoreSnapshot(snap)}>↩ Restore</button>
+                    <button style={styles.btnDanger} onClick={() => removeSnapshot(snap.id)}>✕ Delete</button>
+                  </div>
+                </div>
+              );
+            })
           }
         </div>
       )}
