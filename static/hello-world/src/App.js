@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { invoke, view } from '@forge/bridge';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const styles = {
@@ -298,6 +300,74 @@ export default function App() {
     }
   }
 
+  // ── PDF export ──
+  function exportPDF() {
+    if (members.length === 0) return;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const marginX = 40;
+    let y = 48;
+
+    doc.setFontSize(18);
+    doc.setTextColor(40, 40, 40);
+    doc.text('Sprint Capacity Report', marginX, y);
+
+    y += 22;
+    doc.setFontSize(11);
+    doc.setTextColor(90, 90, 90);
+    doc.text(`${sprintName}   |   ${sprintStart}  ->  ${sprintEnd}`, marginX, y);
+    y += 16;
+    doc.setFontSize(9);
+    doc.text(`Generated ${new Date().toLocaleString()}`, marginX, y);
+
+    // Summary line
+    y += 22;
+    doc.setFontSize(10);
+    doc.setTextColor(40, 40, 40);
+    const summaryLine =
+      `Working days: ${sprintDays}    Members: ${members.length}    ` +
+      `Available: ${Math.round(totalHours * 10) / 10}h / ${Math.round(totalSP * 10) / 10} SP    ` +
+      `Avg capacity: ${avgPct}%` +
+      (bufferPct > 0 ? `    Buffer: ${bufferPct}%` : '');
+    doc.text(summaryLine, marginX, y);
+
+    // Per-member table
+    autoTable(doc, {
+      startY: y + 14,
+      head: [['Name', 'Role', 'Working days', 'Leave', 'Hours', 'SP', 'Capacity']],
+      body: [...results]
+        .sort((a, b) => a.pct - b.pct)
+        .map((r) => [
+          r.name,
+          r.role || '-',
+          `${r.availDays}/${r.totalDays}`,
+          `${r.leaveDays}d`,
+          `${r.availHours}h`,
+          `${r.availSP}`,
+          `${r.pct}%`,
+        ]),
+      styles: { fontSize: 9, cellPadding: 5 },
+      headStyles: { fillColor: [85, 60, 154], textColor: 255 },
+      alternateRowStyles: { fillColor: [245, 243, 250] },
+      margin: { left: marginX, right: marginX },
+    });
+
+    // Risk note
+    const atRisk = results.filter((r) => r.pct < 50);
+    if (atRisk.length > 0) {
+      const afterTable = (doc.lastAutoTable?.finalY ?? y) + 24;
+      doc.setFontSize(10);
+      doc.setTextColor(180, 40, 40);
+      doc.text(
+        `Capacity risk: ${atRisk.map((r) => r.name).join(', ')} ${atRisk.length === 1 ? 'is' : 'are'} below 50% capacity.`,
+        marginX,
+        afterTable,
+      );
+    }
+
+    const safeName = (sprintName || 'sprint').replace(/[^a-z0-9\-_]+/gi, '-');
+    doc.save(`${safeName}-capacity-report.pdf`);
+  }
+
   // ── Render ──
   return (
     <div style={styles.wrap}>
@@ -508,6 +578,7 @@ export default function App() {
                       <button style={styles.btnSecondary} onClick={saveSnapshotNow} disabled={savingSnapshot}>
                         {savingSnapshot ? 'Saving…' : '📜 Save to history'}
                       </button>
+                      <button style={styles.btnPrimary} onClick={exportPDF}>⬇ Export PDF</button>
                     </div>
                   </div>
 
