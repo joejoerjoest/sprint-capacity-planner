@@ -266,6 +266,7 @@ export default function App() {
       return {
         name: m.name,
         role: m.role,
+        accountId: m.accountId,
         totalDays,
         leaveDays,
         availDays,
@@ -490,6 +491,22 @@ export default function App() {
     } finally {
       setJiraBusy('');
     }
+  }
+
+  // Match a team member to their committed record (by Jira accountId, else name).
+  function committedForMember(member) {
+    const list = committed?.byAssignee;
+    if (!list) return null;
+    if (member.accountId) {
+      const byId = list.find((x) => x.accountId && x.accountId === member.accountId);
+      if (byId) return byId;
+    }
+    const lc = member.name.toLowerCase();
+    const first = lc.split(/\s+/)[0];
+    return list.find((x) => {
+      const dn = (x.displayName || '').toLowerCase();
+      return dn === lc || lc.includes(dn) || (first.length >= 3 && dn.includes(first));
+    }) || null;
   }
 
   // ── Render ──
@@ -923,6 +940,19 @@ export default function App() {
                         </div>
                         <span style={{ fontSize: '11px', color: '#718096' }}>
                           {r.pct}% capacity · {r.availDays} of {r.totalDays} working days
+                          {committed && committed.hasSP && (() => {
+                            const cm = committedForMember(r);
+                            const cSP = cm ? cm.sp : 0;
+                            const d = Math.round((r.availSP - cSP) * 10) / 10;
+                            return (
+                              <>
+                                {'  ·  '}Committed in Jira: <b style={{ color: '#90cdf4' }}>{cSP} SP</b>{' '}
+                                {d < 0
+                                  ? <b style={{ color: '#fc8181' }}>(over by {Math.abs(d)} SP)</b>
+                                  : <b style={{ color: '#68d391' }}>({d} SP free)</b>}
+                              </>
+                            );
+                          })()}
                         </span>
                       </div>
                     );

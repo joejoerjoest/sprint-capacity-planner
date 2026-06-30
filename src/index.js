@@ -191,25 +191,46 @@ resolver.define('jiraCommitted', async (req) => {
     let totalSP = 0;
     let issueCount = 0;
     let startAt = 0;
+    const byAssignee = new Map(); // accountId|'unassigned' -> { accountId, displayName, sp, issues }
     while (true) {
-        const fieldsParam = estField || 'summary';
-        const data = await jiraJson(
-            route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=${fieldsParam}`,
-            'sprint-issue'
-        );
+        const data = estField
+            ? await jiraJson(
+                route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=${estField},assignee`,
+                'sprint-issue'
+            )
+            : await jiraJson(
+                route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=assignee`,
+                'sprint-issue'
+            );
         const issues = data?.issues ?? [];
-        issueCount += issues.length;
-        if (estField) {
-            for (const it of issues) {
+        for (const it of issues) {
+            issueCount += 1;
+            const a = it.fields?.assignee;
+            const key = a?.accountId || 'unassigned';
+            let rec = byAssignee.get(key);
+            if (!rec) {
+                rec = { accountId: a?.accountId || null, displayName: a?.displayName || 'Unassigned', sp: 0, issues: 0 };
+                byAssignee.set(key, rec);
+            }
+            rec.issues += 1;
+            if (estField) {
                 const v = it.fields?.[estField];
-                if (typeof v === 'number') totalSP += v;
+                if (typeof v === 'number') { rec.sp += v; totalSP += v; }
             }
         }
         startAt += issues.length;
         if (issues.length === 0 || startAt >= (data?.total ?? startAt)) break;
     }
-    console.log(`committed: estField=${estField} issues=${issueCount} totalSP=${totalSP}`);
-    return { committed: { totalSP: Math.round(totalSP * 10) / 10, issueCount, hasSP: !!estField } };
+    const perAssignee = [...byAssignee.values()].map((r) => ({ ...r, sp: Math.round(r.sp * 10) / 10 }));
+    console.log(`committed: estField=${estField} issues=${issueCount} totalSP=${totalSP} assignees=${perAssignee.length}`);
+    return {
+        committed: {
+            totalSP: Math.round(totalSP * 10) / 10,
+            issueCount,
+            hasSP: !!estField,
+            byAssignee: perAssignee,
+        },
+    };
 });
 
 export const handler = resolver.getDefinitions();
