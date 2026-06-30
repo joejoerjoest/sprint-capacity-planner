@@ -412,6 +412,64 @@ export default function App() {
       );
     }
 
+    // Capacity chart (bars drawn natively — jsPDF can't capture HTML)
+    const showCommitted = committed && committed.hasSP;
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const col = { green: [104, 211, 145], blue: [66, 153, 225], red: [252, 129, 129], track: [226, 232, 240] };
+    const chartRows = [...results]
+      .map((r) => { const cm = committedForMember(r); return { r, comm: cm ? cm.sp : 0 }; })
+      .sort((a, b) => b.r.availSP - a.r.availSP);
+    const chartMax = Math.max(1, ...chartRows.map((x) => x.r.availSP), ...chartRows.map((x) => x.comm));
+    const barX = marginX + 110;
+    const barW = pageW - marginX - barX - 64;
+    const barH = 7;
+
+    let cy = (doc.lastAutoTable?.finalY ?? y) + (atRisk.length > 0 ? 46 : 30);
+    doc.setFontSize(11);
+    doc.setTextColor(40, 40, 40);
+    doc.text(showCommitted ? 'Capacity vs Commitment by member (SP)' : 'Capacity by member (SP)', marginX, cy);
+    cy += 16;
+
+    for (const { r, comm } of chartRows) {
+      if (cy > pageH - 70) { doc.addPage(); cy = 48; }
+      const over = comm > r.availSP;
+      doc.setFontSize(9);
+      doc.setTextColor(40, 40, 40);
+      doc.text(r.name.length > 18 ? `${r.name.slice(0, 17)}…` : r.name, marginX, cy + barH);
+      // Available bar
+      doc.setFillColor(col.track[0], col.track[1], col.track[2]);
+      doc.rect(barX, cy, barW, barH, 'F');
+      doc.setFillColor(col.green[0], col.green[1], col.green[2]);
+      doc.rect(barX, cy, barW * (r.availSP / chartMax), barH, 'F');
+      // Committed bar
+      if (showCommitted) {
+        const c = over ? col.red : col.blue;
+        doc.setFillColor(col.track[0], col.track[1], col.track[2]);
+        doc.rect(barX, cy + barH + 2, barW, barH, 'F');
+        doc.setFillColor(c[0], c[1], c[2]);
+        doc.rect(barX, cy + barH + 2, barW * Math.min(1, comm / chartMax), barH, 'F');
+      }
+      doc.setFontSize(8);
+      doc.setTextColor(90, 90, 90);
+      doc.text(showCommitted ? `${r.availSP} / ${comm} SP` : `${r.availSP} SP`, barX + barW + 6, cy + barH + (showCommitted ? 4 : 0));
+      cy += showCommitted ? barH * 2 + 12 : barH + 12;
+    }
+
+    // Legend
+    doc.setFontSize(8);
+    let lx = marginX;
+    const legendY = cy + 4;
+    const swatch = (x, c, label) => {
+      doc.setFillColor(c[0], c[1], c[2]);
+      doc.rect(x, legendY - 6, 8, 8, 'F');
+      doc.setTextColor(90, 90, 90);
+      doc.text(label, x + 11, legendY);
+      return x + 11 + doc.getTextWidth(label) + 14;
+    };
+    lx = swatch(lx, col.green, 'Available');
+    if (showCommitted) { lx = swatch(lx, col.blue, 'Committed'); lx = swatch(lx, col.red, 'Over-committed'); }
+
     const safeName = (sprintName || 'sprint').replace(/[^a-z0-9\-_]+/gi, '-');
     doc.save(`${safeName}-capacity-report.pdf`);
   }
