@@ -208,7 +208,10 @@ export default function App() {
         l.member === m.name && workingDays.includes(l.date)
       ).length;
       const availDays = Math.max(0, totalDays - leaveDays);
-      const availHours = availDays * m.hours;
+      const rawHours = availDays * m.hours;
+      // Buffer % models meetings/overhead — it shaves a flat % off available hours.
+      const bufferFactor = 1 - (Math.min(100, Math.max(0, bufferPct)) / 100);
+      const availHours = Math.round(rawHours * bufferFactor * 10) / 10;
       const totalHours = totalDays * m.hours;
       const pct = totalHours > 0 ? Math.round((availHours / totalHours) * 100) : 0;
       return {
@@ -217,6 +220,7 @@ export default function App() {
         totalDays,
         leaveDays,
         availDays,
+        rawHours,
         availHours,
         availSP: hoursToSP(availHours, hoursPerSP),
         pct,
@@ -226,6 +230,7 @@ export default function App() {
 
   const results = members.length > 0 ? calculateCapacity() : [];
   const totalHours = results.reduce((s, r) => s + r.availHours, 0);
+  const totalRawHours = results.reduce((s, r) => s + r.rawHours, 0);
   const totalSP = results.reduce((s, r) => s + r.availSP, 0);
   const avgPct = results.length > 0 ? Math.round(results.reduce((s, r) => s + r.pct, 0) / results.length) : 0;
   const sprintDays = getWorkingDays(sprintStart, sprintEnd).length;
@@ -279,6 +284,10 @@ export default function App() {
           <div style={styles.formGroup}>
             <label style={styles.label}>Hrs per SP</label>
             <input type="number" style={{ ...styles.input, width: '80px' }} min="1" max="16" value={hoursPerSP} onChange={e => setHoursPerSP(parseFloat(e.target.value))} />
+          </div>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Buffer % (meetings/overhead)</label>
+            <input type="number" style={{ ...styles.input, width: '80px' }} min="0" max="100" step="5" value={bufferPct} onChange={e => setBufferPct(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))} />
           </div>
         </div>
       </div>
@@ -446,6 +455,18 @@ export default function App() {
                       <span style={styles.summaryItem}>Total available: <b style={{ color: '#68d391' }}>{totalHours}h</b></span>
                       <span style={styles.summaryItem}>Equivalent: <b style={{ color: '#63b3ed' }}>{totalSP} story points</b></span>
                       <span style={styles.summaryItem}>Conversion: <b style={{ color: '#e2e8f0' }}>{hoursPerSP}h per SP</b></span>
+                    </div>
+                  )}
+
+                  {/* Buffer applied note */}
+                  {bufferPct > 0 && (
+                    <div style={{ ...styles.summaryBar, borderLeft: '4px solid #805ad5' }}>
+                      <span style={styles.summaryItem}>
+                        Buffer applied: <b style={{ color: '#b794f4' }}>{bufferPct}%</b> for meetings/overhead
+                      </span>
+                      <span style={styles.summaryItem}>
+                        Before buffer: <b style={{ color: '#a0aec0' }}>{Math.round(totalRawHours * 10) / 10}h</b> → after: <b style={{ color: '#68d391' }}>{Math.round(totalHours * 10) / 10}h</b>
+                      </span>
                     </div>
                   )}
 
