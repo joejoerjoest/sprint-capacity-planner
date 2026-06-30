@@ -11,8 +11,11 @@ modules:
 permissions:
   scopes:
     - storage:app
-    - read:jira-work
-    - read:jira-user
+    - read:board-scope:jira-software
+    - read:sprint:jira-software
+    - read:issue:jira-software
+    - read:field:jira
+    - read:user:jira
 resources:
   - key: main
     path: static/hello-world/build
