@@ -1,5 +1,6 @@
 import Resolver from '@forge/resolver';
 import { kvs } from '@forge/kvs';
+import api, { route } from '@forge/api';
 
 const resolver = new Resolver();
 
@@ -72,6 +73,78 @@ resolver.define('deleteSnapshot', async (req) => {
 
     await kvs.set(histKey, history);
     return { history };
+});
+
+// ── Jira integration (asApp — uses the app's install-time consent) ──
+function projectIdOrKey(req) {
+    return (
+        req?.context?.extension?.project?.key ||
+        req?.context?.extension?.project?.id ||
+        req?.payload?.projectIdOrKey
+    );
+}
+
+async function jiraJson(routeValue) {
+    const res = await api.asApp().requestJira(routeValue);
+    if (!res.ok) {
+        throw new Error(`Jira ${res.status} ${res.statusText}`);
+    }
+    return res.json();
+}
+
+resolver.define('jiraSprints', async (req) => {
+    const pid = projectIdOrKey(req);
+    const boardData = await jiraJson(route`/rest/agile/1.0/board?projectKeyOrId=${pid}&maxResults=50`);
+    const boards = boardData?.values ?? [];
+    const board = boards.find((b) => b.type === 'scrum') || boards[0];
+    if (!board) return { sprints: [], reason: 'no-board' };
+
+    const sprintData = await jiraJson(route`/rest/agile/1.0/board/${board.id}/sprint?state=active,future&maxResults=50`);
+    const sprints = (sprintData?.values ?? []).map((s) => ({
+        id: s.id, name: s.name, state: s.state, startDate: s.startDate, endDate: s.endDate,
+    }));
+    return { sprints };
+});
+
+resolver.define('jiraUsers', async (req) => {
+    const pid = projectIdOrKey(req);
+    const data = await jiraJson(route`/rest/api/3/user/assignable/search?project=${pid}&maxResults=50`);
+    const users = (Array.isArray(data) ? data : [])
+        .filter((u) => u.accountType === 'atlassian')
+        .map((u) => ({ accountId: u.accountId, displayName: u.displayName }));
+    return { users };
+});
+
+resolver.define('jiraCommitted', async (req) => {
+    const { sprintId } = req.payload ?? {};
+    if (!sprintId) return { committed: null };
+
+    // Detect the Story Points field id.
+    const fields = await jiraJson(route`/rest/api/3/field`);
+    const spField = (Array.isArray(fields) ? fields : []).find(
+        (f) => f.name === 'Story Points' || f.name === 'Story point estimate'
+    );
+
+    let totalSP = 0;
+    let issueCount = 0;
+    let startAt = 0;
+    while (true) {
+        const fieldsParam = spField ? spField.id : 'summary';
+        const data = await jiraJson(
+            route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=${fieldsParam}`
+        );
+        const issues = data?.issues ?? [];
+        issueCount += issues.length;
+        if (spField) {
+            for (const it of issues) {
+                const v = it.fields?.[spField.id];
+                if (typeof v === 'number') totalSP += v;
+            }
+        }
+        startAt += issues.length;
+        if (issues.length === 0 || startAt >= (data?.total ?? startAt)) break;
+    }
+    return { committed: { totalSP: Math.round(totalSP * 10) / 10, issueCount, hasSP: !!spField } };
 });
 
 export const handler = resolver.getDefinitions();

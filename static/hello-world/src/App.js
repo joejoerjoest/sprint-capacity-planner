@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { invoke, view, requestJira } from '@forge/bridge';
+import { invoke, view } from '@forge/bridge';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -378,36 +378,22 @@ export default function App() {
     doc.save(`${safeName}-capacity-report.pdf`);
   }
 
-  // ── Jira integration (via @forge/bridge requestJira, as the current user) ──
+  // ── Jira integration (via resolver, asApp) ──
   function projectRef() {
     return projectKeyRef.current || projectIdRef.current;
-  }
-
-  async function jiraGet(restPath) {
-    const res = await requestJira(restPath, { headers: { Accept: 'application/json' } });
-    if (!res.ok) {
-      throw new Error(`Jira ${res.status} on ${restPath}`);
-    }
-    return res.json();
-  }
-
-  // Find a board for this project (prefer a scrum board).
-  async function findBoardId() {
-    const pid = projectRef();
-    const data = await jiraGet(`/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(pid)}&maxResults=50`);
-    const boards = data?.values ?? [];
-    const scrum = boards.find((b) => b.type === 'scrum');
-    return (scrum || boards[0])?.id ?? null;
   }
 
   async function importSprints() {
     setJiraBusy('sprints'); setJiraError('');
     try {
-      const boardId = await findBoardId();
-      if (!boardId) { setJiraError('No board found for this project.'); setJiraSprints([]); return; }
-      const data = await jiraGet(`/rest/agile/1.0/board/${boardId}/sprint?state=active,future&maxResults=50`);
-      setJiraSprints(data?.values ?? []);
-      if ((data?.values ?? []).length === 0) setJiraError('No active or future sprints on this board.');
+      const res = await invoke('jiraSprints', { projectIdOrKey: projectRef() });
+      const sprints = res?.sprints ?? [];
+      setJiraSprints(sprints);
+      if (sprints.length === 0) {
+        setJiraError(res?.reason === 'no-board'
+          ? 'No board found for this project.'
+          : 'No active or future sprints on this board.');
+      }
     } catch (e) {
       console.error(e); setJiraError(e.message || 'Failed to load sprints.');
     } finally {
@@ -427,10 +413,10 @@ export default function App() {
   async function importUsers() {
     setJiraBusy('users'); setJiraError('');
     try {
-      const pid = projectRef();
-      const data = await jiraGet(`/rest/api/3/user/assignable/search?project=${encodeURIComponent(pid)}&maxResults=50`);
-      setJiraUsers(Array.isArray(data) ? data.filter((u) => u.accountType === 'atlassian') : []);
-      if ((data ?? []).length === 0) setJiraError('No assignable users found.');
+      const res = await invoke('jiraUsers', { projectIdOrKey: projectRef() });
+      const users = res?.users ?? [];
+      setJiraUsers(users);
+      if (users.length === 0) setJiraError('No assignable users found.');
     } catch (e) {
       console.error(e); setJiraError(e.message || 'Failed to load users.');
     } finally {
@@ -449,32 +435,10 @@ export default function App() {
     if (!selectedSprint) return;
     setJiraBusy('committed'); setJiraError('');
     try {
-      // Detect the story point field id.
-      const fields = await jiraGet('/rest/api/3/field');
-      const spField = (fields || []).find(
-        (f) => f.name === 'Story Points' || f.name === 'Story point estimate'
-      );
-      let totalSP = 0;
-      let issueCount = 0;
-      let startAt = 0;
-      // Page through sprint issues.
-      while (true) {
-        const fieldsParam = spField ? `&fields=${spField.id}` : '&fields=summary';
-        const data = await jiraGet(
-          `/rest/agile/1.0/sprint/${selectedSprint.id}/issue?startAt=${startAt}&maxResults=50${fieldsParam}`
-        );
-        const issues = data?.issues ?? [];
-        issueCount += issues.length;
-        if (spField) {
-          for (const it of issues) {
-            const v = it.fields?.[spField.id];
-            if (typeof v === 'number') totalSP += v;
-          }
-        }
-        startAt += issues.length;
-        if (issues.length === 0 || startAt >= (data?.total ?? startAt)) break;
+      const res = await invoke('jiraCommitted', { sprintId: selectedSprint.id });
+      if (res?.committed) {
+        setCommitted({ ...res.committed, sprintName: selectedSprint.name });
       }
-      setCommitted({ totalSP: Math.round(totalSP * 10) / 10, issueCount, sprintName: selectedSprint.name, hasSP: !!spField });
     } catch (e) {
       console.error(e); setJiraError(e.message || 'Failed to load sprint issues.');
     } finally {
