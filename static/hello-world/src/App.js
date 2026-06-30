@@ -333,6 +333,7 @@ export default function App() {
         totalHours: Math.round(totalHours * 10) / 10,
         totalSP: Math.round(totalSP * 10) / 10,
         avgPct,
+        committedSP: (committed && committed.hasSP) ? committed.totalSP : null,
       },
     };
     try {
@@ -1256,6 +1257,65 @@ export default function App() {
               {savingSnapshot ? 'Saving…' : '📸 Snapshot current sprint'}
             </button>
           </div>
+
+          {/* Velocity & commitment trend */}
+          {history.length > 0 && (() => {
+            const trend = [...history].reverse().map((s) => ({
+              name: s.summary?.sprintName || 'Sprint',
+              avail: typeof s.summary?.totalSP === 'number' ? s.summary.totalSP : 0,
+              comm: typeof s.summary?.committedSP === 'number' ? s.summary.committedSP : null,
+            }));
+            const maxSP = Math.max(1, ...trend.map((t) => Math.max(t.avail, t.comm || 0)));
+            const n = trend.length;
+            const W = Math.max(340, n * 64);
+            const H = 200;
+            const padL = 34, padR = 12, padT = 12, padB = 46;
+            const chartW = W - padL - padR;
+            const chartH = H - padT - padB;
+            const baseY = padT + chartH;
+            const slot = chartW / n;
+            const barW = Math.min(18, slot * 0.32);
+            const yFor = (v) => baseY - (v / maxSP) * chartH;
+            const ticks = [0, maxSP / 2, maxSP];
+            return (
+              <div style={{ ...styles.card, marginBottom: '20px', overflowX: 'auto' }}>
+                <p style={{ ...styles.sectionHeader, border: 'none', margin: 0, padding: '0 0 8px' }}>📈 Velocity &amp; commitment trend (SP)</p>
+                <svg width={W} height={H} style={{ display: 'block' }}>
+                  {ticks.map((t, i) => (
+                    <g key={`g${i}`}>
+                      <line x1={padL} y1={yFor(t)} x2={W - padR} y2={yFor(t)} stroke="#2d3748" strokeWidth="1" />
+                      <text x={padL - 6} y={yFor(t) + 3} textAnchor="end" fontSize="9" fill="#718096">{Math.round(t)}</text>
+                    </g>
+                  ))}
+                  {trend.map((t, i) => {
+                    const cx = padL + slot * (i + 0.5);
+                    const over = t.comm != null && t.comm > t.avail;
+                    return (
+                      <g key={`b${i}`}>
+                        <rect x={cx - barW - 1} y={yFor(t.avail)} width={barW} height={baseY - yFor(t.avail)} fill="#68d391" rx="2" />
+                        {t.comm != null && (
+                          <rect x={cx + 1} y={yFor(t.comm)} width={barW} height={baseY - yFor(t.comm)} fill={over ? '#fc8181' : '#4299e1'} rx="2" />
+                        )}
+                        <text x={cx} y={baseY + 14} textAnchor="middle" fontSize="9" fill="#a0aec0">
+                          {t.name.length > 10 ? `${t.name.slice(0, 9)}…` : t.name}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </svg>
+                <div style={{ display: 'flex', gap: '16px', fontSize: '11px', color: '#718096', flexWrap: 'wrap', marginTop: '4px' }}>
+                  <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#68d391', borderRadius: '2px', marginRight: '5px' }} />Available SP</span>
+                  <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#4299e1', borderRadius: '2px', marginRight: '5px' }} />Committed SP</span>
+                  <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#fc8181', borderRadius: '2px', marginRight: '5px' }} />Over-committed</span>
+                </div>
+                {trend.every((t) => t.comm == null) && (
+                  <p style={{ fontSize: '11px', color: '#718096', margin: '8px 0 0' }}>
+                    Tip: load Jira commitment before snapshotting to capture committed SP in the trend.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
 
           {history.length === 0
             ? <div style={styles.infoBox}>No snapshots yet — capture the current sprint with “Snapshot current sprint”.</div>
