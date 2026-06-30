@@ -649,18 +649,17 @@ export default function App() {
       try { await saveSnapshotNow(); snapped = true; } catch (e) { /* keep going */ }
     }
     // Roll dates forward by the same span (day after current end).
-    const start = new Date(sprintStart + 'T00:00:00');
-    const end = new Date(sprintEnd + 'T00:00:00');
-    const lenDays = Math.max(0, Math.round((end - start) / 86400000));
-    const ns = new Date(end); ns.setDate(ns.getDate() + 1);
-    const ne = new Date(ns); ne.setDate(ne.getDate() + lenDays);
+    // Use addDays (parses as UTC) to stay timezone-safe.
+    const lenDays = Math.max(0, Math.round((new Date(sprintEnd) - new Date(sprintStart)) / 86400000));
+    const newStart = addDays(sprintEnd, 1);
+    const newEnd = addDays(newStart, lenDays);
     const newName = /\d+\s*$/.test(sprintName)
       ? sprintName.replace(/(\d+)(\s*)$/, (_, n, s) => `${parseInt(n, 10) + 1}${s}`)
       : `${sprintName} (next)`;
 
     setSprintName(newName);
-    setSprintStart(ns.toISOString().split('T')[0]);
-    setSprintEnd(ne.toISOString().split('T')[0]);
+    setSprintStart(newStart);
+    setSprintEnd(newEnd);
     // Keep team, work week, holidays, hours, buffer. Clear sprint-specific data.
     setLeaves([]);
     setSelectedSprint(null);
@@ -669,7 +668,7 @@ export default function App() {
     setConfPageUrl('');
     setConfMsg('');
     setActiveTab('team');
-    setNextMsg(`Started “${newName}” (${ns.toISOString().split('T')[0]} → ${ne.toISOString().split('T')[0]}). Team & settings kept; leave cleared${snapped ? '; previous sprint saved to History' : ''}.`);
+    setNextMsg(`Started “${newName}” (${newStart} → ${newEnd}). Team & settings kept; leave cleared${snapped ? '; previous sprint saved to History' : ''}.`);
   }
 
   // ── Render ──
