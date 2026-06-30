@@ -100,8 +100,9 @@ export default function App() {
   const [lDate, setLDate] = useState(today());
   const [lType, setLType] = useState('Planned Leave');
 
-  // Persistence (bufferPct & history persisted now, no UI yet)
+  // Persistence (history persisted now, no UI yet)
   const [bufferPct, setBufferPct] = useState(0);
+  const [bufferInput, setBufferInput] = useState('0'); // string mirror for clean display
   const [history, setHistory] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -136,7 +137,9 @@ export default function App() {
         }
         setMembers(Array.isArray(data?.members) ? data.members : []);
         setLeaves(Array.isArray(data?.leaves) ? data.leaves : []);
-        setBufferPct(typeof data?.bufferPct === 'number' ? data.bufferPct : 0);
+        const loadedBuffer = typeof data?.bufferPct === 'number' ? data.bufferPct : 0;
+        setBufferPct(loadedBuffer);
+        setBufferInput(String(loadedBuffer));
         setHistory(Array.isArray(data?.history) ? data.history : []);
       } catch (e) {
         // Fresh project or read error — start empty.
@@ -287,7 +290,21 @@ export default function App() {
           </div>
           <div style={styles.formGroup}>
             <label style={styles.label}>Buffer % (meetings/overhead)</label>
-            <input type="number" style={{ ...styles.input, width: '80px' }} min="0" max="100" step="5" value={bufferPct} onChange={e => setBufferPct(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))} />
+            <input
+              type="number"
+              style={{ ...styles.input, width: '80px' }}
+              min="0"
+              max="100"
+              step="5"
+              value={bufferInput}
+              onChange={e => {
+                const clamped = Math.min(100, Math.max(0, parseFloat(e.target.value) || 0));
+                setBufferPct(clamped);
+                // Show the canonical number (drops leading zeros), but keep '' while clearing.
+                setBufferInput(e.target.value === '' ? '' : String(clamped));
+              }}
+              onBlur={() => setBufferInput(String(bufferPct))}
+            />
           </div>
         </div>
       </div>
