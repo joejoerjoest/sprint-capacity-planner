@@ -231,7 +231,6 @@ export default function App() {
       autoRanRef.current = true;
       loadCommitted();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, autoRefresh, selectedSprint, committed]);
 
   // ── Add member ──
