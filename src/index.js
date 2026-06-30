@@ -87,7 +87,10 @@ function projectIdOrKey(req) {
 async function jiraJson(routeValue) {
     const res = await api.asApp().requestJira(routeValue);
     if (!res.ok) {
-        throw new Error(`Jira ${res.status} ${res.statusText}`);
+        let body = '';
+        try { body = (await res.text()).slice(0, 300); } catch (e) { /* ignore */ }
+        console.error(`Jira ${res.status} ${res.statusText} :: ${body}`);
+        throw new Error(`Jira ${res.status} ${res.statusText} :: ${body}`);
     }
     return res.json();
 }
@@ -96,13 +99,29 @@ resolver.define('jiraSprints', async (req) => {
     const pid = projectIdOrKey(req);
     const boardData = await jiraJson(route`/rest/agile/1.0/board?projectKeyOrId=${pid}&maxResults=50`);
     const boards = boardData?.values ?? [];
-    const board = boards.find((b) => b.type === 'scrum') || boards[0];
-    if (!board) return { sprints: [], reason: 'no-board' };
+    if (boards.length === 0) return { sprints: [], reason: 'no-board' };
 
-    const sprintData = await jiraJson(route`/rest/agile/1.0/board/${board.id}/sprint?state=active,future&maxResults=50`);
-    const sprints = (sprintData?.values ?? []).map((s) => ({
-        id: s.id, name: s.name, state: s.state, startDate: s.startDate, endDate: s.endDate,
-    }));
+    // Only Scrum boards have sprints; try them (most relevant first) and skip
+    // any board that returns "does not support sprints".
+    const ordered = boards.slice().sort((a, b) => (b.type === 'scrum') - (a.type === 'scrum'));
+    let sprints = [];
+    for (const board of ordered) {
+        try {
+            const sprintData = await jiraJson(
+                route`/rest/agile/1.0/board/${board.id}/sprint?state=active,future&maxResults=50`
+            );
+            sprints = (sprintData?.values ?? []).map((s) => ({
+                id: s.id, name: s.name, state: s.state, startDate: s.startDate, endDate: s.endDate,
+            }));
+            if (sprints.length > 0) break;
+        } catch (e) {
+            // Kanban / non-sprint board — skip it.
+        }
+    }
+    if (sprints.length === 0) {
+        const hasScrum = boards.some((b) => b.type === 'scrum');
+        return { sprints: [], reason: hasScrum ? 'no-sprints' : 'no-scrum-board' };
+    }
     return { sprints };
 });
 

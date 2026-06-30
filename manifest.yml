@@ -16,6 +16,8 @@ permissions:
     - read:issue:jira-software
     - read:field:jira
     - read:user:jira
+    - read:project:jira
+    - read:issue-details:jira
 resources:
   - key: main
     path: static/hello-world/build

@@ -390,9 +390,12 @@ export default function App() {
       const sprints = res?.sprints ?? [];
       setJiraSprints(sprints);
       if (sprints.length === 0) {
-        setJiraError(res?.reason === 'no-board'
-          ? 'No board found for this project.'
-          : 'No active or future sprints on this board.');
+        const msgByReason = {
+          'no-board': 'No board found for this project.',
+          'no-scrum-board': 'This project has no Scrum board, so there are no sprints to import. (Kanban boards do not have sprints.)',
+          'no-sprints': 'No active or future sprints on this project’s Scrum board.',
+        };
+        setJiraError(msgByReason[res?.reason] || 'No sprints available to import.');
       }
     } catch (e) {
       console.error(e); setJiraError(e.message || 'Failed to load sprints.');
