@@ -8,6 +8,9 @@ modules:
   function:
     - key: resolver
       handler: index.handler
+permissions:
+  scopes:
+    - storage:app
 resources:
   - key: main
     path: static/hello-world/build
