@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { invoke, view } from '@forge/bridge';
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const styles = {
@@ -99,6 +100,80 @@ export default function App() {
   const [lDate, setLDate] = useState(today());
   const [lType, setLType] = useState('Planned Leave');
 
+  // Persistence (bufferPct & history persisted now, no UI yet)
+  const [bufferPct, setBufferPct] = useState(0);
+  const [history, setHistory] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  const projectIdRef = useRef(null);
+  const saveTimerRef = useRef(null);
+
+  // ── Load on mount ──
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let projectId;
+      try {
+        const ctx = await view.getContext();
+        projectId = ctx?.extension?.project?.id;
+      } catch (e) {
+        projectId = undefined;
+      }
+      projectIdRef.current = projectId;
+
+      try {
+        const data = await invoke('getData', { projectId });
+        if (cancelled) return;
+        if (data?.config) {
+          const c = data.config;
+          if (c.sprintName != null) setSprintName(c.sprintName);
+          if (c.sprintStart != null) setSprintStart(c.sprintStart);
+          if (c.sprintEnd != null) setSprintEnd(c.sprintEnd);
+          if (c.mode != null) setMode(c.mode);
+          if (c.hoursPerDay != null) setHoursPerDay(c.hoursPerDay);
+          if (c.hoursPerSP != null) setHoursPerSP(c.hoursPerSP);
+        }
+        setMembers(Array.isArray(data?.members) ? data.members : []);
+        setLeaves(Array.isArray(data?.leaves) ? data.leaves : []);
+        setBufferPct(typeof data?.bufferPct === 'number' ? data.bufferPct : 0);
+        setHistory(Array.isArray(data?.history) ? data.history : []);
+      } catch (e) {
+        // Fresh project or read error — start empty.
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // ── Debounced auto-save ──
+  useEffect(() => {
+    if (!loaded) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    setSaving(true);
+    setSaveError(false);
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        await invoke('saveData', {
+          projectId: projectIdRef.current,
+          config: { sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP },
+          members,
+          leaves,
+          bufferPct,
+        });
+        setSaveError(false);
+      } catch (e) {
+        // Surface the real failure instead of pretending it saved.
+        console.error('saveData failed:', e);
+        setSaveError(true);
+      } finally {
+        setSaving(false);
+      }
+    }, 600);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [loaded, sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, members, leaves, bufferPct]);
+
   // ── Add member ──
   function addMember() {
     if (!mName.trim()) return;
@@ -165,7 +240,12 @@ export default function App() {
           <p style={styles.headerTitle}>⚡ Sprint Capacity Planner</p>
           <p style={styles.headerSub}>Plan smarter. Commit confidently. Deliver consistently.</p>
         </div>
-        <span style={styles.badge}>v1.0</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '12px', color: saveError ? '#fc8181' : '#718096' }}>
+            {!loaded ? 'Loading…' : saving ? 'Saving…' : saveError ? '⚠ Save failed' : 'Saved'}
+          </span>
+          <span style={styles.badge}>v2.0</span>
+        </div>
       </div>
 
       {/* Sprint Config Bar */}
