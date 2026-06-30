@@ -233,4 +233,74 @@ resolver.define('jiraCommitted', async (req) => {
     };
 });
 
+// ── Confluence publishing (asApp) ──
+async function confluenceJson(routeValue) {
+    const res = await api.asApp().requestConfluence(routeValue, { headers: { Accept: 'application/json' } });
+    if (!res.ok) {
+        let b = ''; try { b = (await res.text()).slice(0, 300); } catch (e) { /* ignore */ }
+        console.error(`Confluence ${res.status} ${res.statusText} :: ${b}`);
+        throw new Error(`Confluence ${res.status} ${res.statusText} :: ${b}`);
+    }
+    return res.json();
+}
+
+async function confluenceWrite(routeValue, method, payload) {
+    const res = await api.asApp().requestConfluence(routeValue, {
+        method,
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+        let b = ''; try { b = (await res.text()).slice(0, 300); } catch (e) { /* ignore */ }
+        console.error(`Confluence ${method} ${res.status} ${res.statusText} :: ${b}`);
+        throw new Error(`Confluence ${res.status} ${res.statusText} :: ${b}`);
+    }
+    return res.json();
+}
+
+function pageUrl(res) {
+    const base = res?._links?.base || '';
+    const webui = res?._links?.webui || '';
+    return webui ? `${base}${webui}` : '';
+}
+
+resolver.define('confluenceSpaces', async () => {
+    const data = await confluenceJson(route`/wiki/api/v2/spaces?limit=100`);
+    const spaces = (data?.results ?? []).map((s) => ({ id: s.id, key: s.key, name: s.name }));
+    return { spaces };
+});
+
+resolver.define('publishConfluence', async (req) => {
+    const { spaceId, title, body, pageId } = req.payload ?? {};
+    if (!spaceId || !title || !body) return { error: 'Missing space, title, or content.' };
+    const bodyObj = { representation: 'storage', value: body };
+
+    if (pageId) {
+        // Update existing page (needs current version number).
+        let current;
+        try {
+            current = await confluenceJson(route`/wiki/api/v2/pages/${pageId}?body-format=storage`);
+        } catch (e) {
+            current = null; // page was deleted — fall through to create
+        }
+        if (current?.id) {
+            const nextVer = (current?.version?.number ?? 1) + 1;
+            const res = await confluenceWrite(route`/wiki/api/v2/pages/${pageId}`, 'PUT', {
+                id: pageId,
+                status: 'current',
+                title,
+                spaceId,
+                body: bodyObj,
+                version: { number: nextVer, message: 'Updated by Sprint Capacity Planner' },
+            });
+            return { pageId: res.id, url: pageUrl(res), updated: true };
+        }
+    }
+
+    const res = await confluenceWrite(route`/wiki/api/v2/pages`, 'POST', {
+        spaceId, status: 'current', title, body: bodyObj,
+    });
+    return { pageId: res.id, url: pageUrl(res), updated: false };
+});
+
 export const handler = resolver.getDefinitions();
