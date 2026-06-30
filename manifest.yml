@@ -21,6 +21,10 @@ permissions:
     - read:application-role:jira
     - read:group:jira
     - read:avatar:jira
+    - read:jql:jira
+    - read:issue-meta:jira
+    - read:status:jira
+    - read:project-role:jira
 resources:
   - key: main
     path: static/hello-world/build

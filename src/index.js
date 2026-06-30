@@ -89,7 +89,8 @@ async function jiraJson(routeValue) {
     if (!res.ok) {
         let body = '';
         try { body = (await res.text()).slice(0, 300); } catch (e) { /* ignore */ }
-        console.error(`Jira ${res.status} ${res.statusText} :: ${body}`);
+        const wwwAuth = res.headers?.get?.('www-authenticate') || '';
+        console.error(`Jira ${res.status} ${res.statusText} :: ${body} :: WWW-Authenticate: ${wwwAuth}`);
         throw new Error(`Jira ${res.status} ${res.statusText} :: ${body}`);
     }
     return res.json();
