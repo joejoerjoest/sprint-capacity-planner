@@ -138,6 +138,8 @@ export default function App() {
   const [jiraBusy, setJiraBusy] = useState(''); // '', 'sprints', 'users', 'committed'
   const [jiraError, setJiraError] = useState('');
   const [selectedSprint, setSelectedSprint] = useState(null); // { id, name }
+  const [autoRefresh, setAutoRefresh] = useState(false); // auto-load commitment on open
+  const autoRanRef = useRef(false);
 
   // Confluence publishing
   const [confSpaces, setConfSpaces] = useState([]);
@@ -178,6 +180,7 @@ export default function App() {
           if (c.selectedSprint?.id) setSelectedSprint(c.selectedSprint);
           if (c.confSpaceId) setConfSpaceId(c.confSpaceId);
           if (c.confPageId) setConfPageId(c.confPageId);
+          if (typeof c.autoRefresh === 'boolean') setAutoRefresh(c.autoRefresh);
         }
         setMembers(Array.isArray(data?.members) ? data.members : []);
         setLeaves(Array.isArray(data?.leaves) ? data.leaves : []);
@@ -204,7 +207,7 @@ export default function App() {
       try {
         await invoke('saveData', {
           projectId: projectIdRef.current,
-          config: { sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, workDays, holidays, selectedSprint, confSpaceId, confPageId },
+          config: { sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, workDays, holidays, selectedSprint, confSpaceId, confPageId, autoRefresh },
           members,
           leaves,
           bufferPct,
@@ -219,7 +222,17 @@ export default function App() {
       }
     }, 600);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [loaded, sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, members, leaves, bufferPct, workDays, holidays, selectedSprint, confSpaceId, confPageId]);
+  }, [loaded, sprintName, sprintStart, sprintEnd, mode, hoursPerDay, hoursPerSP, members, leaves, bufferPct, workDays, holidays, selectedSprint, confSpaceId, confPageId, autoRefresh]);
+
+  // ── Auto-load Jira commitment on open (once per mount, when enabled) ──
+  useEffect(() => {
+    if (!loaded) return;
+    if (autoRefresh && selectedSprint?.id && !committed && !autoRanRef.current && jiraBusy !== 'committed') {
+      autoRanRef.current = true;
+      loadCommitted();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, autoRefresh, selectedSprint, committed]);
 
   // ── Add member ──
   function addMember() {
@@ -1082,6 +1095,10 @@ export default function App() {
                           </>
                         );
                       })()}
+                      <label style={{ fontSize: '11px', color: '#a0aec0', display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto', cursor: 'pointer' }} title="Automatically load Jira commitment when this page opens">
+                        <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />
+                        Auto-load on open
+                      </label>
                     </div>
                   )}
 
