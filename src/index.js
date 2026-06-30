@@ -42,4 +42,36 @@ resolver.define('saveData', async (req) => {
     return { ok: true };
 });
 
+const MAX_HISTORY = 20;
+
+// Append the current sprint as a snapshot to the per-project history key.
+resolver.define('saveSnapshot', async (req) => {
+    const histKey = `${projectKey(req)}:hist`;
+    const { snapshot } = req.payload ?? {};
+
+    const existing = (await kvs.get(histKey)) ?? [];
+    const entry = {
+        id: `snap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        savedAt: new Date().toISOString(),
+        ...snapshot,
+    };
+    // Newest first, capped to MAX_HISTORY.
+    const history = [entry, ...existing].slice(0, MAX_HISTORY);
+
+    await kvs.set(histKey, history);
+    return { history };
+});
+
+// Remove one snapshot by id from the per-project history key.
+resolver.define('deleteSnapshot', async (req) => {
+    const histKey = `${projectKey(req)}:hist`;
+    const { id } = req.payload ?? {};
+
+    const existing = (await kvs.get(histKey)) ?? [];
+    const history = existing.filter((s) => s.id !== id);
+
+    await kvs.set(histKey, history);
+    return { history };
+});
+
 export const handler = resolver.getDefinitions();
