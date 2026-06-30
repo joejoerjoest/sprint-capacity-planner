@@ -105,6 +105,7 @@ export default function App() {
   const [workDays, setWorkDays] = useState(DEFAULT_WORK_DAYS);
   const [holidays, setHolidays] = useState([]); // ['YYYY-MM-DD', ...]
   const [hDate, setHDate] = useState(today());
+  const [nextMsg, setNextMsg] = useState('');
 
   // Team
   const [members, setMembers] = useState([]);
@@ -639,6 +640,37 @@ export default function App() {
     }
   }
 
+  // ── Start next sprint: snapshot current, then roll forward ──
+  async function startNextSprint() {
+    setNextMsg('');
+    // Preserve the current sprint in history first (no data lost).
+    let snapped = false;
+    if (members.length > 0) {
+      try { await saveSnapshotNow(); snapped = true; } catch (e) { /* keep going */ }
+    }
+    // Roll dates forward by the same span (day after current end).
+    // Use addDays (parses as UTC) to stay timezone-safe.
+    const lenDays = Math.max(0, Math.round((new Date(sprintEnd) - new Date(sprintStart)) / 86400000));
+    const newStart = addDays(sprintEnd, 1);
+    const newEnd = addDays(newStart, lenDays);
+    const newName = /\d+\s*$/.test(sprintName)
+      ? sprintName.replace(/(\d+)(\s*)$/, (_, n, s) => `${parseInt(n, 10) + 1}${s}`)
+      : `${sprintName} (next)`;
+
+    setSprintName(newName);
+    setSprintStart(newStart);
+    setSprintEnd(newEnd);
+    // Keep team, work week, holidays, hours, buffer. Clear sprint-specific data.
+    setLeaves([]);
+    setSelectedSprint(null);
+    setCommitted(null);
+    setConfPageId('');
+    setConfPageUrl('');
+    setConfMsg('');
+    setActiveTab('team');
+    setNextMsg(`Started “${newName}” (${newStart} → ${newEnd}). Team & settings kept; leave cleared${snapped ? '; previous sprint saved to History' : ''}.`);
+  }
+
   // ── Render ──
   return (
     <div style={styles.wrap}>
@@ -734,7 +766,17 @@ export default function App() {
               ))}
             </select>
           )}
+          <button
+            style={{ ...styles.btnSecondary, borderColor: '#553c9a', color: '#b794f4', marginLeft: 'auto' }}
+            onClick={startNextSprint}
+            title="Snapshot this sprint to History, then roll dates forward and clear leave"
+          >
+            ⏭ Start next sprint
+          </button>
         </div>
+        {nextMsg && (
+          <p style={{ fontSize: '12px', color: '#9ae6b4', margin: '8px 0 0' }}>{nextMsg}</p>
+        )}
       </div>
 
       {/* Work Week & Holidays */}
