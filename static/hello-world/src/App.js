@@ -112,6 +112,7 @@ export default function App() {
   const [mName, setMName] = useState('');
   const [mRole, setMRole] = useState('');
   const [mHours, setMHours] = useState(6);
+  const [mAvail, setMAvail] = useState(100);
 
   // Leave
   const [leaves, setLeaves] = useState([]);
@@ -238,13 +239,19 @@ export default function App() {
   function addMember() {
     if (!mName.trim()) return;
     if (members.find(m => m.name === mName.trim())) return;
-    setMembers([...members, { name: mName.trim(), role: mRole.trim(), hours: parseFloat(mHours) }]);
-    setMName(''); setMRole(''); setMHours(hoursPerDay);
+    const avail = Math.min(100, Math.max(0, parseFloat(mAvail) || 0));
+    setMembers([...members, { name: mName.trim(), role: mRole.trim(), hours: parseFloat(mHours), avail }]);
+    setMName(''); setMRole(''); setMHours(hoursPerDay); setMAvail(100);
   }
 
   function removeMember(name) {
     setMembers(members.filter(m => m.name !== name));
     setLeaves(leaves.filter(l => l.member !== name));
+  }
+
+  function updateMemberAvail(name, value) {
+    const avail = Math.min(100, Math.max(0, parseFloat(value) || 0));
+    setMembers(members.map(m => (m.name === name ? { ...m, avail } : m)));
   }
 
   // ── Add leave ──
@@ -285,7 +292,9 @@ export default function App() {
           .reduce((sum, l) => sum + (l.half ? 0.5 : 1), 0) * 10
       ) / 10;
       const availDays = Math.max(0, totalDays - leaveDays);
-      const rawHours = availDays * m.hours;
+      // Per-member availability % (part-time / split across teams).
+      const availFactor = Math.min(100, Math.max(0, typeof m.avail === 'number' ? m.avail : 100)) / 100;
+      const rawHours = Math.round(availDays * m.hours * availFactor * 10) / 10;
       // Buffer % models meetings/overhead — it shaves a flat % off available hours.
       const bufferFactor = 1 - (Math.min(100, Math.max(0, bufferPct)) / 100);
       const availHours = Math.round(rawHours * bufferFactor * 10) / 10;
@@ -295,6 +304,7 @@ export default function App() {
         name: m.name,
         role: m.role,
         accountId: m.accountId,
+        avail: typeof m.avail === 'number' ? m.avail : 100,
         totalDays,
         leaveDays,
         availDays,
@@ -881,6 +891,10 @@ export default function App() {
               <label style={styles.label}>Hours/day</label>
               <input type="number" style={{ ...styles.input, width: '80px' }} min="1" max="8" step="0.5" value={mHours} onChange={e => setMHours(e.target.value)} />
             </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>Avail %</label>
+              <input type="number" style={{ ...styles.input, width: '80px' }} min="0" max="100" step="5" value={mAvail} onChange={e => setMAvail(e.target.value)} />
+            </div>
             <button style={styles.btnPrimary} onClick={addMember}>+ Add Member</button>
             <button style={styles.btnSecondary} onClick={importUsers} disabled={jiraBusy === 'users'}>
               {jiraBusy === 'users' ? 'Loading…' : '⟳ Import assignees from Jira'}
@@ -924,6 +938,15 @@ export default function App() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                       <span style={styles.memberStat}><b style={{ color: '#e2e8f0' }}>{m.hours}h</b>/day</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <input
+                          type="number" min="0" max="100" step="5"
+                          style={{ ...styles.input, width: '64px', padding: '4px 8px' }}
+                          value={typeof m.avail === 'number' ? m.avail : 100}
+                          onChange={e => updateMemberAvail(m.name, e.target.value)}
+                        />
+                        <span style={styles.memberStat}>% avail</span>
+                      </span>
                       <button style={styles.btnDanger} onClick={() => removeMember(m.name)}>✕</button>
                     </div>
                   </div>
@@ -1174,6 +1197,7 @@ export default function App() {
                           <div>
                             <span style={styles.memberName}>{r.name}</span>
                             <span style={styles.memberRole}> · {r.role}</span>
+                            {r.avail < 100 && <span style={{ ...styles.pill, background: '#553c9a', color: '#e9d8fd', marginLeft: '8px' }}>{r.avail}% avail</span>}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                             <span style={styles.memberStat}>{valStr} · <b style={{ color: '#e2e8f0' }}>{r.leaveDays}d leave</b></span>
