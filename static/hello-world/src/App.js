@@ -1181,6 +1181,52 @@ export default function App() {
                     );
                   })()}
 
+                  {/* Capacity by role */}
+                  {(() => {
+                    const showCommitted = committed && committed.hasSP;
+                    const byRole = {};
+                    for (const r of results) {
+                      const key = (r.role && r.role.trim()) ? r.role.trim() : '(no role)';
+                      if (!byRole[key]) byRole[key] = { role: key, count: 0, hours: 0, sp: 0, committed: 0 };
+                      byRole[key].count += 1;
+                      byRole[key].hours += r.availHours;
+                      byRole[key].sp += r.availSP;
+                      if (showCommitted) { const cm = committedForMember(r); byRole[key].committed += cm ? cm.sp : 0; }
+                    }
+                    const roleRows = Object.values(byRole).sort((a, b) => b.sp - a.sp);
+                    if (roleRows.length === 0) return null;
+                    return (
+                      <>
+                        <p style={styles.sectionHeader}>🧩 Capacity by role</p>
+                        {roleRows.map((g) => {
+                          const sp = Math.round(g.sp * 10) / 10;
+                          const hrs = Math.round(g.hours * 10) / 10;
+                          const cSp = Math.round(g.committed * 10) / 10;
+                          const over = showCommitted && cSp > sp;
+                          return (
+                            <div key={g.role} style={{ ...styles.card, ...styles.sideBySide }}>
+                              <div>
+                                <span style={styles.memberName}>{g.role}</span>
+                                <span style={styles.memberRole}> · {g.count} member{g.count !== 1 ? 's' : ''}</span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                                <span style={styles.memberStat}><b style={{ color: '#68d391' }}>{hrs}h</b> · <b style={{ color: '#63b3ed' }}>{sp} SP</b> available</span>
+                                {showCommitted && (
+                                  <span style={styles.memberStat}>
+                                    committed <b style={{ color: '#90cdf4' }}>{cSp} SP</b>{' '}
+                                    {over
+                                      ? <b style={{ color: '#fc8181' }}>(over by {Math.round((cSp - sp) * 10) / 10})</b>
+                                      : <b style={{ color: '#68d391' }}>({Math.round((sp - cSp) * 10) / 10} free)</b>}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </>
+                    );
+                  })()}
+
                   {/* Per-member breakdown */}
                   <p style={styles.sectionHeader}>Per-member breakdown</p>
                   {[...results].sort((a, b) => a.pct - b.pct).map((r, i) => {
