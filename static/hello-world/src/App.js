@@ -118,6 +118,7 @@ export default function App() {
   const [lMember, setLMember] = useState('');
   const [lDate, setLDate] = useState(today());
   const [lType, setLType] = useState('Planned Leave');
+  const [lHalf, setLHalf] = useState(false);
 
   // Persistence (history persisted now, no UI yet)
   const [bufferPct, setBufferPct] = useState(0);
@@ -250,7 +251,7 @@ export default function App() {
   function addLeave() {
     if (!lMember) return;
     if (leaves.find(l => l.member === lMember && l.date === lDate)) return;
-    setLeaves([...leaves, { member: lMember, date: lDate, type: lType }]);
+    setLeaves([...leaves, { member: lMember, date: lDate, type: lType, half: lHalf }]);
   }
 
   function removeLeave(idx) {
@@ -278,9 +279,11 @@ export default function App() {
     const totalDays = workingDays.length;
 
     return members.map(m => {
-      const leaveDays = leaves.filter(l =>
-        l.member === m.name && workingDays.includes(l.date)
-      ).length;
+      const leaveDays = Math.round(
+        leaves
+          .filter(l => l.member === m.name && workingDays.includes(l.date))
+          .reduce((sum, l) => sum + (l.half ? 0.5 : 1), 0) * 10
+      ) / 10;
       const availDays = Math.max(0, totalDays - leaveDays);
       const rawHours = availDays * m.hours;
       // Buffer % models meetings/overhead — it shaves a flat % off available hours.
@@ -959,6 +962,13 @@ export default function App() {
                       <option>WFH (Reduced)</option>
                     </select>
                   </div>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Duration</label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#e2e8f0', padding: '8px 0' }}>
+                      <input type="checkbox" checked={lHalf} onChange={e => setLHalf(e.target.checked)} />
+                      ½ Half day
+                    </label>
+                  </div>
                   <button style={styles.btnPrimary} onClick={addLeave}>+ Log Leave</button>
                 </div>
 
@@ -977,9 +987,10 @@ export default function App() {
                           <div key={i} style={{ ...styles.card, ...styles.sideBySide }}>
                             <div>
                               <span style={styles.memberName}>{l.member}</span>
-                              <span style={styles.memberRole}> · {l.date}</span>
+                              <span style={styles.memberRole}> · {l.date}{l.half ? ' · ½ day' : ''}</span>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              {l.half && <span style={{ ...styles.pill, background: '#2d3748', color: '#cbd5e0' }}>½ day</span>}
                               <span style={{ ...styles.pill, background: pillColor.bg, color: pillColor.color }}>{l.type}</span>
                               <button style={styles.btnDanger} onClick={() => removeLeave(i)}>✕</button>
                             </div>
