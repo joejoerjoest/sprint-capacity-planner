@@ -84,13 +84,12 @@ function projectIdOrKey(req) {
     );
 }
 
-async function jiraJson(routeValue) {
+async function jiraJson(routeValue, label = '') {
     const res = await api.asApp().requestJira(routeValue);
     if (!res.ok) {
         let body = '';
         try { body = (await res.text()).slice(0, 300); } catch (e) { /* ignore */ }
-        const wwwAuth = res.headers?.get?.('www-authenticate') || '';
-        console.error(`Jira ${res.status} ${res.statusText} :: ${body} :: WWW-Authenticate: ${wwwAuth}`);
+        console.error(`Jira ${res.status} ${res.statusText} on [${label}] :: ${body}`);
         throw new Error(`Jira ${res.status} ${res.statusText} :: ${body}`);
     }
     return res.json();
@@ -155,32 +154,42 @@ resolver.define('jiraCommitted', async (req) => {
     const { sprintId } = req.payload ?? {};
     if (!sprintId) return { committed: null };
 
-    // Detect the Story Points field id.
-    const fields = await jiraJson(route`/rest/api/3/field`);
-    const spField = (Array.isArray(fields) ? fields : []).find(
-        (f) => f.name === 'Story Points' || f.name === 'Story point estimate'
-    );
+    // Find the board behind this sprint, then its configured estimation field
+    // (Story Points). Uses agile scopes only — avoids /rest/api/3/field.
+    let estField = null;
+    try {
+        const sprint = await jiraJson(route`/rest/agile/1.0/sprint/${sprintId}`, 'sprint');
+        const boardId = sprint?.originBoardId;
+        if (boardId) {
+            const cfg = await jiraJson(route`/rest/agile/1.0/board/${boardId}/configuration`, 'board-config');
+            const fid = cfg?.estimation?.field?.fieldId;
+            if (fid && fid !== 'none') estField = fid;
+        }
+    } catch (e) {
+        // Fall back to issue count only.
+    }
 
     let totalSP = 0;
     let issueCount = 0;
     let startAt = 0;
     while (true) {
-        const fieldsParam = spField ? spField.id : 'summary';
+        const fieldsParam = estField || 'summary';
         const data = await jiraJson(
-            route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=${fieldsParam}`
+            route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=${fieldsParam}`,
+            'sprint-issue'
         );
         const issues = data?.issues ?? [];
         issueCount += issues.length;
-        if (spField) {
+        if (estField) {
             for (const it of issues) {
-                const v = it.fields?.[spField.id];
+                const v = it.fields?.[estField];
                 if (typeof v === 'number') totalSP += v;
             }
         }
         startAt += issues.length;
         if (issues.length === 0 || startAt >= (data?.total ?? startAt)) break;
     }
-    return { committed: { totalSP: Math.round(totalSP * 10) / 10, issueCount, hasSP: !!spField } };
+    return { committed: { totalSP: Math.round(totalSP * 10) / 10, issueCount, hasSP: !!estField } };
 });
 
 export const handler = resolver.getDefinitions();
