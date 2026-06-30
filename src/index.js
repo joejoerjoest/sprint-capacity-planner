@@ -125,13 +125,29 @@ resolver.define('jiraSprints', async (req) => {
     return { sprints };
 });
 
+// Unique assignees across the linked sprint's issues — the people actually
+// doing the work. Uses the agile issue scopes (no user-search scope needed).
 resolver.define('jiraUsers', async (req) => {
-    const pid = projectIdOrKey(req);
-    const data = await jiraJson(route`/rest/api/3/user/assignable/search?project=${pid}&maxResults=50`);
-    const users = (Array.isArray(data) ? data : [])
-        .filter((u) => u.accountType === 'atlassian')
-        .map((u) => ({ accountId: u.accountId, displayName: u.displayName }));
-    return { users };
+    const { sprintId } = req.payload ?? {};
+    if (!sprintId) return { users: [], reason: 'no-sprint' };
+
+    const seen = new Map();
+    let startAt = 0;
+    while (true) {
+        const data = await jiraJson(
+            route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=assignee`
+        );
+        const issues = data?.issues ?? [];
+        for (const it of issues) {
+            const a = it.fields?.assignee;
+            if (a?.accountId && !seen.has(a.accountId)) {
+                seen.set(a.accountId, { accountId: a.accountId, displayName: a.displayName });
+            }
+        }
+        startAt += issues.length;
+        if (issues.length === 0 || startAt >= (data?.total ?? startAt)) break;
+    }
+    return { users: [...seen.values()] };
 });
 
 resolver.define('jiraCommitted', async (req) => {

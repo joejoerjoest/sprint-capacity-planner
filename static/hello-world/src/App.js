@@ -414,14 +414,22 @@ export default function App() {
   }
 
   async function importUsers() {
+    if (!selectedSprint) {
+      setJiraError('Link a Jira sprint first (Sprint Configuration → Import sprint from Jira) to import its assignees.');
+      return;
+    }
     setJiraBusy('users'); setJiraError('');
     try {
-      const res = await invoke('jiraUsers', { projectIdOrKey: projectRef() });
+      const res = await invoke('jiraUsers', { sprintId: selectedSprint.id });
       const users = res?.users ?? [];
       setJiraUsers(users);
-      if (users.length === 0) setJiraError('No assignable users found.');
+      if (users.length === 0) {
+        setJiraError(res?.reason === 'no-sprint'
+          ? 'Link a Jira sprint first to import its assignees.'
+          : 'No assignees found on this sprint’s issues yet.');
+      }
     } catch (e) {
-      console.error(e); setJiraError(e.message || 'Failed to load users.');
+      console.error(e); setJiraError(e.message || 'Failed to load assignees.');
     } finally {
       setJiraBusy('');
     }
@@ -593,7 +601,7 @@ export default function App() {
           {jiraUsers.length > 0 && (
             <div style={{ ...styles.card, marginBottom: '16px' }}>
               <div style={styles.sideBySide}>
-                <p style={{ ...styles.sectionHeader, border: 'none', margin: 0, padding: 0 }}>Assignable Jira users — click to add</p>
+                <p style={{ ...styles.sectionHeader, border: 'none', margin: 0, padding: 0 }}>Sprint assignees — click to add</p>
                 <button style={styles.btnDanger} onClick={() => setJiraUsers([])}>✕ Close</button>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '12px' }}>
