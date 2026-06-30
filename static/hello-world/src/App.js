@@ -915,6 +915,51 @@ export default function App() {
                     </div>
                   )}
 
+                  {/* Capacity chart */}
+                  <p style={styles.sectionHeader}>
+                    📊 Capacity {committed && committed.hasSP ? 'vs Commitment ' : ''}by member (SP)
+                  </p>
+                  {(() => {
+                    const rows = results.map((r) => {
+                      const cm = committedForMember(r);
+                      return { r, comm: cm ? cm.sp : 0 };
+                    });
+                    const chartMax = Math.max(1, ...rows.map((x) => x.r.availSP), ...rows.map((x) => x.comm));
+                    const showCommitted = committed && committed.hasSP;
+                    const sorted = [...rows].sort((a, b) => b.r.availSP - a.r.availSP);
+                    return (
+                      <div style={{ ...styles.card, marginBottom: '16px' }}>
+                        {sorted.map(({ r, comm }, i) => {
+                          const over = comm > r.availSP;
+                          return (
+                            <div key={r.name} style={{ marginBottom: i === sorted.length - 1 ? 0 : '14px' }}>
+                              <div style={{ ...styles.sideBySide, marginBottom: '4px' }}>
+                                <span style={styles.memberStat}><b style={{ color: '#e2e8f0' }}>{r.name}</b></span>
+                                <span style={{ fontSize: '11px', color: '#718096' }}>
+                                  {r.availSP} SP avail
+                                  {showCommitted && <> · <span style={{ color: over ? '#fc8181' : '#90cdf4' }}>{comm} SP committed</span></>}
+                                </span>
+                              </div>
+                              <div style={{ ...styles.barBg, height: '10px', margin: '0 0 3px' }}>
+                                <div style={{ height: '10px', borderRadius: '6px', width: `${Math.round((r.availSP / chartMax) * 100)}%`, background: capacityColor(r.pct) }} />
+                              </div>
+                              {showCommitted && (
+                                <div style={{ ...styles.barBg, height: '10px', margin: 0 }}>
+                                  <div style={{ height: '10px', borderRadius: '6px', width: `${Math.round((comm / chartMax) * 100)}%`, background: over ? '#fc8181' : '#4299e1' }} />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        <div style={{ display: 'flex', gap: '16px', marginTop: '12px', fontSize: '11px', color: '#718096', flexWrap: 'wrap' }}>
+                          <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#68d391', borderRadius: '2px', marginRight: '5px' }} />Available</span>
+                          {showCommitted && <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#4299e1', borderRadius: '2px', marginRight: '5px' }} />Committed</span>}
+                          {showCommitted && <span><span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#fc8181', borderRadius: '2px', marginRight: '5px' }} />Over-committed</span>}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Per-member breakdown */}
                   <p style={styles.sectionHeader}>Per-member breakdown</p>
                   {[...results].sort((a, b) => a.pct - b.pct).map((r, i) => {
