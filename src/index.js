@@ -275,18 +275,34 @@ resolver.define('publishConfluence', async (req) => {
     if (!spaceId || !title || !body) return { error: 'Missing space, title, or content.' };
     const bodyObj = { representation: 'storage', value: body };
 
-    if (pageId) {
+    let targetId = pageId || null;
+
+    // No stored page id: look for an existing page with this title in the space
+    // so we update it instead of failing with "a page with this title exists".
+    if (!targetId) {
+        try {
+            const found = await confluenceJson(
+                route`/wiki/api/v2/pages?space-id=${spaceId}&title=${title}&status=current&limit=25`
+            );
+            const existing = (found?.results ?? []).find((p) => p.title === title);
+            if (existing?.id) targetId = existing.id;
+        } catch (e) {
+            // Search failed — fall through to create.
+        }
+    }
+
+    if (targetId) {
         // Update existing page (needs current version number).
         let current;
         try {
-            current = await confluenceJson(route`/wiki/api/v2/pages/${pageId}?body-format=storage`);
+            current = await confluenceJson(route`/wiki/api/v2/pages/${targetId}?body-format=storage`);
         } catch (e) {
             current = null; // page was deleted — fall through to create
         }
         if (current?.id) {
             const nextVer = (current?.version?.number ?? 1) + 1;
-            const res = await confluenceWrite(route`/wiki/api/v2/pages/${pageId}`, 'PUT', {
-                id: pageId,
+            const res = await confluenceWrite(route`/wiki/api/v2/pages/${targetId}`, 'PUT', {
+                id: targetId,
                 status: 'current',
                 title,
                 spaceId,
