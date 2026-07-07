@@ -75,7 +75,12 @@ resolver.define('deleteSnapshot', async (req) => {
     return { history };
 });
 
-// ── Jira integration (asApp — uses the app's install-time consent) ──
+// ── Jira integration ──
+// SECURITY (AMS-60213/60214/60215): all product API calls run asUser(), so
+// Jira and Confluence enforce the *invoking user's* permissions. The app
+// never uses its own install-time consent (asApp) for user-triggered reads
+// or writes. Permission failures are surfaced as friendly errors.
+
 function projectIdOrKey(req) {
     return (
         req?.context?.extension?.project?.key ||
@@ -84,12 +89,23 @@ function projectIdOrKey(req) {
     );
 }
 
-async function jiraJson(routeValue, label = '') {
-    const res = await api.asApp().requestJira(routeValue);
+function friendlyPermissionError(product, status, action) {
+    if (status === 401 || status === 403) {
+        return new Error(
+            `You don't have permission to ${action}. Ask your ${product} admin for access, or try with an account that has the required permission.`
+        );
+    }
+    return null;
+}
+
+async function jiraJson(routeValue, label = '', action = 'read Jira data') {
+    const res = await api.asUser().requestJira(routeValue);
     if (!res.ok) {
         let body = '';
         try { body = (await res.text()).slice(0, 300); } catch (e) { /* ignore */ }
         console.error(`Jira ${res.status} ${res.statusText} on [${label}] :: ${body}`);
+        const perm = friendlyPermissionError('Jira', res.status, action);
+        if (perm) throw perm;
         throw new Error(`Jira ${res.status} ${res.statusText} :: ${body}`);
     }
     return res.json();
@@ -97,7 +113,11 @@ async function jiraJson(routeValue, label = '') {
 
 resolver.define('jiraSprints', async (req) => {
     const pid = projectIdOrKey(req);
-    const boardData = await jiraJson(route`/rest/agile/1.0/board?projectKeyOrId=${pid}&maxResults=50`);
+    const boardData = await jiraJson(
+        route`/rest/agile/1.0/board?projectKeyOrId=${pid}&maxResults=50`,
+        'boards',
+        'view this project\'s boards'
+    );
     const boards = boardData?.values ?? [];
     if (boards.length === 0) return { sprints: [], reason: 'no-board' };
 
@@ -108,7 +128,9 @@ resolver.define('jiraSprints', async (req) => {
     for (const board of ordered) {
         try {
             const sprintData = await jiraJson(
-                route`/rest/agile/1.0/board/${board.id}/sprint?state=active,future&maxResults=50`
+                route`/rest/agile/1.0/board/${board.id}/sprint?state=active,future&maxResults=50`,
+                'sprints',
+                'view sprints on this board'
             );
             sprints = (sprintData?.values ?? []).map((s) => ({
                 id: s.id, name: s.name, state: s.state, startDate: s.startDate, endDate: s.endDate,
@@ -135,7 +157,9 @@ resolver.define('jiraUsers', async (req) => {
     let startAt = 0;
     while (true) {
         const data = await jiraJson(
-            route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=assignee`
+            route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=assignee`,
+            'sprint-issues',
+            'view issues in this sprint'
         );
         const issues = data?.issues ?? [];
         for (const it of issues) {
@@ -157,11 +181,15 @@ resolver.define('jiraCommitted', async (req) => {
     // 1) Try the board's configured estimation field (clean when available).
     let estField = null;
     try {
-        const sprint = await jiraJson(route`/rest/agile/1.0/sprint/${sprintId}`, 'sprint');
+        const sprint = await jiraJson(route`/rest/agile/1.0/sprint/${sprintId}`, 'sprint', 'view this sprint');
         const boardId = sprint?.originBoardId;
         console.log(`committed: sprint ${sprintId} originBoardId=${boardId}`);
         if (boardId) {
-            const cfg = await jiraJson(route`/rest/agile/1.0/board/${boardId}/configuration`, 'board-config');
+            const cfg = await jiraJson(
+                route`/rest/agile/1.0/board/${boardId}/configuration`,
+                'board-config',
+                'view this board\'s configuration'
+            );
             console.log(`committed: board ${boardId} estimation=${JSON.stringify(cfg?.estimation)}`);
             const fid = cfg?.estimation?.field?.fieldId;
             if (fid && fid !== 'none') estField = fid;
@@ -175,7 +203,8 @@ resolver.define('jiraCommitted', async (req) => {
         try {
             const probe = await jiraJson(
                 route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=0&maxResults=1&fields=*all&expand=names`,
-                'names-probe'
+                'names-probe',
+                'view issues in this sprint'
             );
             const names = probe?.names ?? {};
             const entry = Object.entries(names).find(
@@ -196,11 +225,13 @@ resolver.define('jiraCommitted', async (req) => {
         const data = estField
             ? await jiraJson(
                 route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=${estField},assignee`,
-                'sprint-issue'
+                'sprint-issue',
+                'view issues in this sprint'
             )
             : await jiraJson(
                 route`/rest/agile/1.0/sprint/${sprintId}/issue?startAt=${startAt}&maxResults=50&fields=assignee`,
-                'sprint-issue'
+                'sprint-issue',
+                'view issues in this sprint'
             );
         const issues = data?.issues ?? [];
         for (const it of issues) {
@@ -233,19 +264,24 @@ resolver.define('jiraCommitted', async (req) => {
     };
 });
 
-// ── Confluence publishing (asApp) ──
-async function confluenceJson(routeValue) {
-    const res = await api.asApp().requestConfluence(routeValue, { headers: { Accept: 'application/json' } });
+// ── Confluence publishing ──
+// SECURITY: asUser() — Confluence enforces the invoking user's space and
+// page permissions. Users without Confluence access get a friendly error.
+
+async function confluenceJson(routeValue, action = 'read Confluence data') {
+    const res = await api.asUser().requestConfluence(routeValue, { headers: { Accept: 'application/json' } });
     if (!res.ok) {
         let b = ''; try { b = (await res.text()).slice(0, 300); } catch (e) { /* ignore */ }
         console.error(`Confluence ${res.status} ${res.statusText} :: ${b}`);
+        const perm = friendlyPermissionError('Confluence', res.status, action);
+        if (perm) throw perm;
         throw new Error(`Confluence ${res.status} ${res.statusText} :: ${b}`);
     }
     return res.json();
 }
 
-async function confluenceWrite(routeValue, method, payload) {
-    const res = await api.asApp().requestConfluence(routeValue, {
+async function confluenceWrite(routeValue, method, payload, action = 'publish to this Confluence space') {
+    const res = await api.asUser().requestConfluence(routeValue, {
         method,
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(payload),
@@ -253,6 +289,8 @@ async function confluenceWrite(routeValue, method, payload) {
     if (!res.ok) {
         let b = ''; try { b = (await res.text()).slice(0, 300); } catch (e) { /* ignore */ }
         console.error(`Confluence ${method} ${res.status} ${res.statusText} :: ${b}`);
+        const perm = friendlyPermissionError('Confluence', res.status, action);
+        if (perm) throw perm;
         throw new Error(`Confluence ${res.status} ${res.statusText} :: ${b}`);
     }
     return res.json();
@@ -265,7 +303,10 @@ function pageUrl(res) {
 }
 
 resolver.define('confluenceSpaces', async () => {
-    const data = await confluenceJson(route`/wiki/api/v2/spaces?limit=100`);
+    const data = await confluenceJson(
+        route`/wiki/api/v2/spaces?limit=100`,
+        'view Confluence spaces'
+    );
     const spaces = (data?.results ?? []).map((s) => ({ id: s.id, key: s.key, name: s.name }));
     return { spaces };
 });
@@ -282,7 +323,8 @@ resolver.define('publishConfluence', async (req) => {
     if (!targetId) {
         try {
             const found = await confluenceJson(
-                route`/wiki/api/v2/pages?space-id=${spaceId}&title=${title}&status=current&limit=25`
+                route`/wiki/api/v2/pages?space-id=${spaceId}&title=${title}&status=current&limit=25`,
+                'search pages in this Confluence space'
             );
             const existing = (found?.results ?? []).find((p) => p.title === title);
             if (existing?.id) targetId = existing.id;
@@ -295,7 +337,10 @@ resolver.define('publishConfluence', async (req) => {
         // Update existing page (needs current version number).
         let current;
         try {
-            current = await confluenceJson(route`/wiki/api/v2/pages/${targetId}?body-format=storage`);
+            current = await confluenceJson(
+                route`/wiki/api/v2/pages/${targetId}?body-format=storage`,
+                'read this Confluence page'
+            );
         } catch (e) {
             current = null; // page was deleted — fall through to create
         }
